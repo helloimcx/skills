@@ -1,0 +1,62 @@
+# User Login Flowchart
+# A basic flowchart showing the login process with decision points
+
+direction: down
+
+# Terminal nodes
+Start: {
+  shape: oval
+  style: { fill: #c8e6c9; stroke: #2e7d32 }
+  label: Start
+}
+
+End: {
+  shape: oval
+  style: { fill: #ffcdd2; stroke: #c62828 }
+  label: End
+}
+
+# Process nodes
+EnterCredentials: {
+  shape: rectangle
+  style: { fill: #e3f2fd; stroke: #1565c0 }
+  label: Enter Username & Password
+}
+
+ValidateCredentials: {
+  shape: diamond
+  style: { fill: #fff9c4; stroke: #f9a825 }
+  label: Valid?
+}
+
+ShowError: {
+  shape: rectangle
+  style: { fill: #ffe0b2; stroke: #ef6c00 }
+  label: Show Error Message
+}
+
+Dashboard: {
+  shape: rectangle
+  style: { fill: #e1f5fe; stroke: #0277bd }
+  label: User Dashboard
+}
+
+ResetPassword: {
+  shape: rectangle
+  style: { fill: #f3e5f5; stroke: #7b1fa2 }
+  label: Password Reset
+}
+
+# Flow connections
+Start -> EnterCredentials
+EnterCredentials -> ValidateCredentials
+
+ValidateCredentials -> ShowError: No
+ValidateCredentials -> Dashboard: Yes
+
+ShowError -> EnterCredentials: Retry
+
+EnterCredentials -> ResetPassword: Forgot Password
+ResetPassword -> Start
+
+Dashboard -> End: Logout

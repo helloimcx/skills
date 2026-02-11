@@ -1,0 +1,103 @@
+# E-Commerce Payment System Class Diagram
+# Shows UML classes with relationships, fields, and methods
+
+direction: down
+
+# Abstract base class
+PaymentProcessor: class {
+  +id: string
+  +name: string
+  +isActive: boolean
+  +process(amount: decimal, currency: string): PaymentResult
+  +refund(transactionId: string): RefundResult
+  #validateMerchant(): boolean
+  #logTransaction(): void
+}
+
+# Concrete implementations
+CreditCardProcessor: class {
+  +processorId: string
+  +supportedNetworks: string[]
+  +process(amount: decimal, currency: string): PaymentResult
+  +refund(transactionId: string): RefundResult
+  -validateCard(card: Card): ValidationResult
+  -authorizePayment(): AuthResult
+  -capturePayment(authId: string): CaptureResult
+}
+
+PayPalProcessor: class {
+  +clientId: string
+  +clientSecret: string
+  +process(amount: decimal, currency: string): PaymentResult
+  +refund(transactionId: string): RefundResult
+  -getAccessToken(): string
+  -createPaymentRequest(): PaymentRequest
+}
+
+StripeProcessor: class {
+  +apiKey: string
+  +webhookSecret: string
+  +process(amount: decimal, currency: string): PaymentResult
+  +refund(transactionId: string): RefundResult
+  -createPaymentIntent(): string
+  -confirmPayment(): ConfirmResult
+}
+
+# Supporting classes
+Transaction: class {
+  +id: string
+  +amount: decimal
+  +currency: string
+  +status: TransactionStatus
+  +createdAt: DateTime
+  +updatedAt: DateTime
+  +capture(): void
+  +void(): void
+  +refund(amount: decimal): Refund
+}
+
+Card: class {
+  +number: string
+  +expiryMonth: int
+  +expiryYear: int
+  +cvv: string
+  +cardholderName: string
+  +brand: CardBrand
+  +isValid(): boolean
+  +isExpired(): boolean
+  +mask(): string
+}
+
+PaymentResult: class {
+  +success: boolean
+  +transactionId: string
+  +errorCode: string
+  +errorMessage: string
+  +processedAt: DateTime
+  +isSuccessful(): boolean
+}
+
+Customer: class {
+  +id: string
+  +email: string
+  +name: string
+  +defaultPaymentMethod: PaymentMethod
+  +addPaymentMethod(method: PaymentMethod): void
+  +removePaymentMethod(id: string): void
+}
+
+# Relationships
+CreditCardProcessor ->> PaymentProcessor: extends
+PayPalProcessor ->> PaymentProcessor: extends
+StripeProcessor ->> PaymentProcessor: extends
+
+PaymentProcessor ..> Transaction: creates
+PaymentProcessor ..> Card: validates (credit card)
+PaymentProcessor -> PaymentResult: returns
+
+Transaction ->* PaymentResult: produces
+Transaction -> Customer: belongs to
+
+CreditCardProcessor ..> Card: uses
+
+Customer "1" -> "0..*" Transaction: makes

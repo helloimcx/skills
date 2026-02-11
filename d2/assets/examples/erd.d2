@@ -1,0 +1,115 @@
+# E-Commerce Database Schema
+# Entity-Relationship Diagram for an online store
+
+direction: right
+
+# Customers
+customers: sql_table {
+  id: int PK
+  email: string UNQ NN
+  password_hash: string NN
+  first_name: string NN
+  last_name: string
+  phone: string
+  created_at: timestamp NN
+  updated_at: timestamp
+}
+
+# Addresses
+addresses: sql_table {
+  id: int PK
+  customer_id: int FK NN
+  address_line1: string NN
+  address_line2: string
+  city: string NN
+  state: string
+  postal_code: string
+  country: string NN
+  is_default: boolean
+}
+
+# Products
+products: sql_table {
+  id: int PK
+  sku: string UNQ NN
+  name: string NN
+  description: text
+  price: decimal NN
+  cost: decimal
+  stock_quantity: int NN
+  category_id: int FK
+  is_active: boolean
+  created_at: timestamp NN
+}
+
+# Categories
+categories: sql_table {
+  id: int PK
+  name: string UNQ NN
+  slug: string UNQ NN
+  description: text
+  parent_id: int FK
+  display_order: int
+}
+
+# Orders
+orders: sql_table {
+  id: int PK
+  order_number: string UNQ NN
+  customer_id: int FK NN
+  status: string NN
+  subtotal: decimal NN
+  tax: decimal
+  shipping: decimal
+  total: decimal NN
+  shipping_address_id: int FK
+  billing_address_id: int FK
+  created_at: timestamp NN
+  updated_at: timestamp
+}
+
+# Order Items
+order_items: sql_table {
+  id: int PK
+  order_id: int FK NN
+  product_id: int FK NN
+  quantity: int NN
+  unit_price: decimal NN
+  subtotal: decimal NN
+}
+
+# Payments
+payments: sql_table {
+  id: int PK
+  order_id: int FK UNQ
+  amount: decimal NN
+  payment_method: string NN
+  status: string NN
+  transaction_id: string
+  created_at: timestamp NN
+  processed_at: timestamp
+}
+
+# Reviews
+reviews: sql_table {
+  id: int PK
+  product_id: int FK NN
+  customer_id: int FK NN
+  rating: int NN
+  title: string
+  comment: text
+  is_verified: boolean
+  created_at: timestamp NN
+}
+
+# Relationships
+customers -> addresses: has
+customers -> orders: places
+orders -> order_items: contains
+products -> order_items: ordered in
+categories -> products: categorizes
+categories -> categories: parent of
+orders -> payments: paid by
+orders -> addresses: ships to
+products -> reviews: has
+customers -> reviews: writes

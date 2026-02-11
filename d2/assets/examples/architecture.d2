@@ -1,0 +1,114 @@
+# Web Application Architecture
+# Shows a typical 3-tier web application with load balancing
+
+direction: right
+
+# Client Layer
+clients: Client Layer {
+  direction: down
+  style: { fill: #e8f5e9; stroke: #2e7d32 }
+
+  WebBrowser: {
+    shape: rectangle
+    label: Web Browser
+  }
+
+  MobileApp: {
+    shape: rectangle
+    label: Mobile App
+  }
+}
+
+# Load Balancer
+LoadBalancer: {
+  shape: hexagon
+  style: { fill: #fff3e0; stroke: #ef6c00; stroke-width: 2 }
+  label: Load Balancer
+}
+
+# Web Server Cluster
+webServers: Web Servers {
+  direction: down
+  style: { fill: #e3f2fd; stroke: #1565c0 }
+
+  WebServer1: {
+    shape: cylinder
+    label: Web Server 1
+  }
+
+  WebServer2: {
+    shape: cylinder
+    label: Web Server 2
+  }
+
+  WebServer3: {
+    shape: cylinder
+    label: Web Server 3
+  }
+}
+
+# Application Layer
+appLayer: Application Layer {
+  direction: down
+  style: { fill: #f3e5f5; stroke: #6a1b9a }
+
+  APIGateway: {
+    shape: rectangle
+    label: API Gateway
+  }
+
+  AuthService: {
+    shape: rectangle
+    label: Auth Service
+  }
+
+  BusinessLogic: {
+    shape: rectangle
+    label: Business Logic
+  }
+}
+
+# Data Layer
+dataLayer: Data Layer {
+  direction: down
+  style: { fill: #ffebee; stroke: #c62828 }
+
+  PrimaryDB: {
+    shape: database
+    label: Primary Database
+  }
+
+  Cache: {
+    shape: cylinder
+    label: Redis Cache
+    style: { fill: #fff9c4; stroke: #f9a825 }
+  }
+
+  MessageQueue: {
+    shape: queue
+    label: Message Queue
+  }
+}
+
+# External Services
+externalServices: External Services {
+  direction: down
+  style: { fill: #eceff1; stroke: #455a64; stroke-dash: 5 }
+
+  PaymentGateway: {
+    shape: rectangle
+    label: Payment Gateway
+  }
+
+  EmailService: {
+    shape: rectangle
+    label: Email Service
+  }
+}
+
+# Connections
+clients -> LoadBalancer
+LoadBalancer -> webServers
+webServers -> appLayer
+appLayer -> dataLayer
+appLayer -> externalServices
