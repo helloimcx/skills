@@ -5,7 +5,11 @@
       "WebSearch",
       "Bash(python:*)",
       "Bash(python3:*)",
-      "Bash(unzip:*)"
+      "Bash(unzip:*)",
+      "Bash(brew install git)",
+      "Bash(git config --global credential.helper osxkeychain)",
+      "Bash(git push)",
+      "Bash(git config --global http.sslBackend openssl)"
     ]
   }
 }
