@@ -1,3 +1,38 @@
-# SKILSS COLLECTION
+# Skills Collection
 
-This is a collection of skills that can be used in various applications. Each skill is designed to perform a specific task and can be easily integrated into your projects.
+This repository contains a collection of Agent Skills compatible with [skills.sh](https://skills.sh) and AI coding agents (Claude Code, Cursor, Windsurf, Antigravity, Codex, etc.).
+
+## Skills Overview
+
+| Skill | Description | Installation |
+|---|---|---|
+| `vibe-coding` | 端到端高质量 Vibe Coding 工作流（需求澄清/复杂度分级/并行规划/TDD/Review/真实QA闭环） | `npx skills add helloimcx/skills --skill vibe-coding` |
+| `code-duplication-scanner` | 检测 Git 修改代码与现有代码库之间的重复代码 | `npx skills add helloimcx/skills --skill code-duplication-scanner` |
+| `d2-diagrams` | 根据自然语言描述生成 D2 架构图、流程图、ERD、UML 类图与序列图 | `npx skills add helloimcx/skills --skill d2-diagrams` |
+| `github-arch-analyzer` | 分析 GitHub 项目架构并输出结构化中文技术文档 | `npx skills add helloimcx/skills --skill github-arch-analyzer` |
+
+## Installation & Usage
+
+### Via skills.sh CLI (`npx skills`)
+
+Install all skills in this repository:
+```bash
+npx skills add helloimcx/skills --all
+```
+
+Install a specific skill (e.g. `vibe-coding`):
+```bash
+npx skills add helloimcx/skills --skill vibe-coding
+```
+
+Install globally across all supported agents:
+```bash
+npx skills add helloimcx/skills --skill vibe-coding -g
+```
+
+### Manual Installation
+
+Copy the desired skill directory to your agent's skill directory:
+- Claude Code: `~/.claude/skills/<skill-name>/`
+- Codex: `~/.codex/skills/<skill-name>/`
+- Antigravity / Gemini: `~/.gemini/config/skills/<skill-name>/`

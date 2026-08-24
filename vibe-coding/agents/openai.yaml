@@ -1,0 +1,4 @@
+interface:
+  display_name: "Vibe Coding"
+  short_description: "分级规划、TDD、独立 Review 与真实 QA 的高质量编码流程"
+  default_prompt: "使用 $vibe-coding 按高质量端到端流程完成当前编码任务。"

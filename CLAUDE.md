@@ -20,11 +20,22 @@ Do NOT install skills to Claude until the user explicitly confirms approval.
 
 Skills are installed by copying folders directly to `~/.claude/skills/`.
 
+### vibe-coding
+- **目录**: `vibe-coding/`
+- **功能**: 面向高质量软件开发的端到端 Vibe Coding 工作流（需求澄清/复杂度分级/并行规划/TDD/Review/真实QA闭环）
+- **文件**: `vibe-coding/SKILL.md`
+
+### code-duplication-scanner
+- **目录**: `code-duplication-scanner/`
+- **功能**: 检测 Git 修改代码与现有代码库之间的重复代码
+- **文件**: `code-duplication-scanner/SKILL.md`
+
 ### github-arch-analyzer
 - **目录**: `github-arch-analyzer/`
 - **功能**: 分析 GitHub 项目架构，包括功能、技术栈、系统设计和关键模块
 - **输出**: 中文技术文档，必要时调用 d2-diagrams skill 生成可视化图表
 - **文件**: `github-arch-analyzer/SKILL.md`
+
 
 ### d2 (D2 Diagramming)
 - **目录**: `d2/`
