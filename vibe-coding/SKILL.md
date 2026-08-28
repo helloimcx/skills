@@ -7,7 +7,7 @@ description: 面向实现功能、修复 Bug、重构和技术改造的端到端
 
 目标：以尽可能少的沟通成本，把需求稳定地变成**正确、简洁、可维护、经过真实验证**的代码。
 
-`理解需求 → 检查仓库 → 必要时澄清 → 复杂度分级 → 方案/Spec+Plan → 用户批准 → 创建分支与 Worktree → 持久化文档 → TDD → Review → QA → 完成`
+`理解需求 → 检查仓库 → 必要时澄清 → 复杂度分级 → 方案/Spec+Plan → 用户批准 → 创建分支与 Worktree → 持久化文档 → TDD → 架构与文档同步 → Review → QA → 完成`
 
 ## 0. 核心原则
 
@@ -19,8 +19,9 @@ description: 面向实现功能、修复 Bug、重构和技术改造的端到端
 6. **复杂任务先并行规划，再集中裁决。** 3 个相同角色的独立 Subagent 分别求解，主 Agent 形成唯一最终方案。
 7. **TDD 是默认实现方式。** 遵循 `RED → GREEN → REFACTOR`；全部行为切片完成后，完整测试套件必须全部通过。
 8. **Review 和 QA 是质量门禁。** 验证深度按任务风险和项目能力选择，发现有效问题必须修复并重测。
-9. **优先最简单的正确方案。** 尊重现有架构，避免无需求支撑的抽象、框架和顺手重构。
-10. **Done 需要证据。** 相关验收标准、自动化测试和适用的真实主路径均有验证结论。
+9. **文档必须反映当前代码。** 实现完成后、Review 前必须检查架构与文档影响并同步维护。
+10. **优先最简单的正确方案。** 尊重现有架构，避免无需求支撑的抽象、框架和顺手重构。
+11. **Done 需要证据。** 相关验收标准、自动化测试和适用的真实主路径均有验证结论。
 
 ---
 
@@ -116,9 +117,21 @@ Spec 和 Plan 必须自包含，并保留上一节规定的必要字段。
 
 ---
 
-## 5. 独立代码 Review
+## 5. 架构与文档同步
 
-实现和相关测试通过后，召唤 1 个未参与实现的独立 Subagent，按 [references/review.md](references/review.md) 只读检查最终 Spec、Acceptance Criteria、完整 diff 和必要上下文：
+代码是系统实现的事实来源。实现和全量测试完成后、进入 Review 前，读取并执行 [references/documentation-sync.md](references/documentation-sync.md)：基于当前工作区与目标分支的完整 Git Diff 检查架构和文档影响，不得跳过。
+
+- 无文档影响时明确记录 `Docs Impact: None`；
+- 有影响时同步架构文档、ADR、Spec、Plan 或稳定的仓库级 Agent 规则；
+- `docs/architecture/` 描述当前代码的真实架构，历史决策由 ADR 保存，代码历史由 Git 保存。
+
+文档同步属于 Definition of Done。若分析过程引发代码修改，重新执行全量测试和本步骤。
+
+---
+
+## 6. 独立代码 Review
+
+架构与文档同步完成后，召唤 1 个未参与实现的独立 Subagent，按 [references/review.md](references/review.md) 只读检查最终 Spec、Acceptance Criteria、Code Diff、Architecture Diff、Documentation Diff 和必要上下文：
 
 - 简单任务：Adversarial Review；
 - 中等任务：Spec Verifier + Cleaner；
@@ -132,7 +145,7 @@ Spec 和 Plan 必须自包含，并保留上一节规定的必要字段。
 
 ---
 
-## 6. QA 与真实验证
+## 7. QA 与真实验证
 
 Review 通过后，读取 [references/qa.md](references/qa.md)，按**任务风险、改动边界和项目实际能力**选择适用检查。上一节的完整自动化测试套件是硬门禁；除此之外，不机械要求每个任务执行不存在的测试层级或启动不存在的服务。
 
@@ -154,13 +167,14 @@ QA 失败时执行：
 
 ---
 
-## 7. 完成标准
+## 8. 完成标准
 
 只有同时满足以下条件才可以宣布完成：
 
 - 已批准的 Scope 已实现；
 - Acceptance Criteria 有明确验证结论；
 - 仓库定义的完整自动化测试套件全部通过；
+- 已记录文档影响分析，所有受影响架构与文档已同步；
 - Review 无未解决阻塞问题；
 - 适用的真实主路径已验证，或明确说明环境限制；
 - 没有隐藏已知失败、无关改动或明显临时代码。

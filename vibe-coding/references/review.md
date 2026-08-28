@@ -8,7 +8,8 @@ Review 目标是找出作者会愿意修复的具体问题，而不是证明 Rev
 - Reviewer 不参与本轮实现；
 - Review 时只读，不修改代码；
 - 读取最终 Spec / Acceptance Criteria；
-- 检查完整 diff 以及必要的上下文、调用方和测试；
+- 读取 Architecture & Documentation Impact Analysis；
+- 同时检查 Code Diff、Architecture Diff、Documentation Diff，以及必要的上下文、调用方和测试；
 - 继续检查完整改动，不因找到第一个问题而停止；
 - 只报告具体、可验证、可行动的问题；
 - 区分阻塞问题和建议，不把个人风格偏好升级成阻塞问题。
@@ -78,6 +79,12 @@ Reviewer 的心态：**尝试证明这段代码在真实场景下会失败。**
 - 扩展点是否建立在真实需求上；
 - 核心设计是否会让未来修改成本显著增加；
 - 是否破坏现有架构原则。
+
+## Documentation Gate
+
+按照 [documentation-sync.md](documentation-sync.md) 验证文档影响结论。若代码改变模块边界、依赖关系、公共接口、核心流程、数据流、API、配置、部署拓扑或开发/构建/测试流程，而相关架构文档、Spec、Plan 或仓库级规则未同步更新，将其列为阻塞 Finding，Review 不得通过。
+
+`Docs Impact: None` 也必须能够由完整 Git Diff 支撑，不能作为跳过检查的默认结论。
 
 ## Finding 处理
 
