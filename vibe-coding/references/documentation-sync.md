@@ -31,6 +31,7 @@
 
 - 系统整体架构 → `docs/architecture/`
 - 模块职责与边界 → `docs/architecture/modules.md`
+- 新增职责与边界清晰的较大独立模块 → `docs/architecture/modules/<module-name>.md`，并在 `docs/architecture/modules.md` 增加入口
 - 模块依赖关系 → `docs/architecture/dependencies.md`
 - 重要架构决策及原因 → `docs/architecture/decisions/` 中的 ADR
 - 功能规格变化 → 对应 Spec
@@ -38,6 +39,8 @@
 - Agent 工作规则、开发命令或仓库级约束变化 → `CLAUDE.md` / `AGENTS.md`
 
 `CLAUDE.md` 和 `AGENTS.md` 只维护稳定的仓库级规则与文档入口，不复制容易变化的详细架构内容。
+
+当模块具有独立业务职责，并拥有公共接口、独立依赖边界或核心数据流之一时，按较大独立模块处理。独立模块文档使用小写 kebab-case 模块名，至少说明模块目标、职责与边界、公共接口、关键依赖或数据流；当结构、依赖或流程仅靠文字不易理解时，添加一张简洁的 Mermaid 或 ASCII 示意图。
 
 ## 3. 一致性原则
 
@@ -53,6 +56,6 @@ Reviewer 必须同时检查：
 
 `Code Diff + Architecture Diff + Documentation Diff`
 
-若代码改变模块边界、依赖关系、公共接口、核心流程、数据流、API、配置、部署拓扑或开发/构建/测试流程，而相关文档没有同步更新，Review 不得通过。
+若代码改变模块边界、依赖关系、公共接口、核心流程、数据流、API、配置、部署拓扑或开发/构建/测试流程，而相关文档没有同步更新，Review 不得通过。新增较大独立模块却没有对应模块文档，也视为阻塞问题。
 
 文档影响分析与必要的文档更新属于 Definition of Done。

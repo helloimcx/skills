@@ -13,6 +13,7 @@
 - 中等/复杂任务：Spec 和 Plan 按 `YYYY-MM-DD-<task-slug>.md` 持久化到 `docs/`；
 - TDD：RED → GREEN → REFACTOR，完成后完整自动化测试套件必须全部通过；
 - Review 前执行 Architecture & Documentation Impact Analysis，并同步受影响文档；
+- 新增较大独立模块时创建专属模块架构文档，并按需添加示意图；
 - 独立 Subagent Review；
 - Review / QA 失败自动回流；
 - 按任务风险执行适用的自动化测试与真实主路径验证；
