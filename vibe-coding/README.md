@@ -8,6 +8,7 @@
 - 简单 / 中等 / 复杂三级流程；
 - 复杂任务：3 个相同角色的独立 Subagent 并行规划，主 Agent 统一评判和综合；
 - 编码前唯一 Approval Gate；
+- 默认从最新 `origin/main` 或 `origin/master` 创建任务分支并在独立 Git worktree 开发；
 - 中等/复杂任务：批准后的 Spec 和 Plan 以两个 Markdown 文档持久化到 `docs/`；
 - TDD：RED → GREEN → REFACTOR，完成后完整自动化测试套件必须全部通过；
 - 独立 Subagent Review；
