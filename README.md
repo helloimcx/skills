@@ -7,6 +7,7 @@ This repository contains a collection of Agent Skills compatible with [skills.sh
 | Skill | Description | Installation |
 |---|---|---|
 | `vibe-coding` | 端到端高质量 Vibe Coding 工作流（需求澄清/复杂度分级/并行规划/TDD/Review/真实QA闭环） | `npx skills add helloimcx/skills --skill vibe-coding` |
+| `project-setup` | 安全初始化具备架构、文档、测试、质量门禁与真实验证的新软件项目 | `npx skills add helloimcx/skills --skill project-setup` |
 | `code-duplication-scanner` | 检测 Git 修改代码与现有代码库之间的重复代码 | `npx skills add helloimcx/skills --skill code-duplication-scanner` |
 | `d2-diagrams` | 根据自然语言描述生成 D2 架构图、流程图、ERD、UML 类图与序列图 | `npx skills add helloimcx/skills --skill d2-diagrams` |
 | `github-arch-analyzer` | 分析 GitHub 项目架构并输出结构化中文技术文档 | `npx skills add helloimcx/skills --skill github-arch-analyzer` |

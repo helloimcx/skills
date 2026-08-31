@@ -20,6 +20,11 @@ Do NOT install skills to Claude until the user explicitly confirms approval.
 
 Skills are installed by copying folders directly to `~/.claude/skills/`.
 
+### project-setup
+- **目录**: `project-setup/`
+- **功能**: 独立、安全地初始化具备架构、Docs as Code、测试体系、质量门禁、可观测性和安全默认值的新软件项目
+- **文件**: `project-setup/SKILL.md`
+
 ### vibe-coding
 - **目录**: `vibe-coding/`
 - **功能**: 面向高质量软件开发的端到端 Vibe Coding 工作流（需求澄清/复杂度分级/并行规划/TDD/Review/真实QA闭环）
