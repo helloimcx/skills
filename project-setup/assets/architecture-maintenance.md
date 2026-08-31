@@ -1,0 +1,91 @@
+# Architecture Maintenance
+
+This policy is loaded on demand after the repository's root Agent instructions classify a proposed change as `Architecture Impact: Required`. Code and provider-neutral architecture facts are the sources of truth. A diagram provider is a replaceable renderer, not the owner of architecture semantics.
+
+## Architecture Impact
+
+Classify a change as `Required` when it alters any of the following:
+
+- a runtime component, service, or major module responsibility;
+- dependency direction or a public protocol;
+- data ownership, storage, or a primary data flow;
+- a trust, deployment, process, or network boundary;
+- an external integration or synchronous/asynchronous communication mode;
+- addition, removal, split, or merge of an architectural component.
+
+File count and changed-line count do not decide architectural impact. Use `None` for an internal refactor that preserves responsibilities, boundaries, dependencies, protocols, and data flow. Do not rewrite diagrams for `None` merely to create documentation churn.
+
+## Durable Records
+
+Maintain three separate concerns:
+
+1. `docs/architecture.md` describes the current provider-neutral system facts and repository evidence.
+2. `docs/architecture/changes/YYYY-MM-DD-<slug>.md` records one semantic architecture delta and its evidence. The record is append-only after the change is accepted; later corrections use a new record that links back.
+3. `docs/architecture/providers/<provider>/` contains replaceable provider source and receipts. Provider files never replace the current facts or semantic history.
+
+Each change record states the base revision or working-tree state, affected components and boundaries, added/removed/changed/rerouted facts, rationale or ADR, compatibility or migration consequences when real, code evidence, active provider, and validation result. Do not claim inferred runtime impact, risk, ownership, or merge safety without evidence.
+
+Git retains prior provider source revisions. When the active provider supports comparison, compare the last verified base source with the candidate and retain the checked delta artifact or receipt with the change record. Comparison is supporting evidence, not the history source of truth.
+
+## Diagram Provider Contract
+
+Read `docs/architecture/diagram-provider.yaml` before editing provider files. It declares the active provider, fallback, capabilities, stable public outputs, provider-specific source, receipt paths, and README mode.
+
+Every active provider must:
+
+- render only architecture facts supported by the repository and `docs/architecture.md`;
+- preserve stable component identities across revisions when semantics are unchanged;
+- validate its candidate before replacing the last-known-good artifact;
+- produce either the stable README image declared by the manifest (SVG or PNG) or an explicitly configured inline Mermaid fallback; in inline mode, preserve the manifest's stable `outputs.readme` path as the reserved static-export location, but do not link that path until a real artifact exists;
+- keep provider-specific material under `docs/architecture/providers/<provider>/`;
+- report a non-zero command, failed validation, missing tool, stale output, or unresolved source evidence truthfully.
+
+Archify ([repository](https://github.com/tt-a1i/archify)) is the preferred provider when available. Discover the actual installed skill/CLI location and version at execution time, then follow the installed Archify skill rather than duplicating version-sensitive commands here. Use its typed source, validation, trusted delivery, static export, receipt, and Architecture Delta capabilities that are actually available; record the discovered provider/version and validation or delivery receipt. Archify remains replaceable: do not encode its JSON fields in `docs/architecture.md`, semantic change records, root Agent routing, or the stable README contract.
+
+Never install or update a provider, change global Agent configuration, start a preview server, open a GUI, or access a remote system without the authorization required for that action. If Archify is unavailable, use the declared fallback. If no declared provider can produce a current valid README diagram, preserve the last-known-good output, mark the step `[BLOCKED]`, and do not report architecture synchronization as complete.
+
+## Required Workflow
+
+For `Architecture Impact: Required`:
+
+1. Capture the base revision and read the current facts, latest relevant change record, provider manifest, and active provider source.
+2. Inspect the changed code and tests. Update `docs/architecture.md` from evidence, not from the requested design alone.
+3. Add one change record under `docs/architecture/changes/` describing the semantic delta and evidence.
+4. Update only the active provider's source. Preserve stable component identities and unrelated layout where semantics did not change.
+5. Run the provider's required validation. When supported and a verified base source exists, generate a Before/Delta/After comparison and receipt.
+6. Publish the validated current artifact atomically. A failed candidate must not replace the last-known-good diagram.
+7. Update exactly one managed README block so it directly shows the latest valid static diagram or inline Mermaid fallback.
+8. Run repository documentation/link checks and the ordinary complete quality suite. Recheck the final diff for agreement among code, current facts, history, provider source/receipt, and README.
+
+## README Contract
+
+The root README contains exactly one block bounded by:
+
+```text
+<!-- project-setup:architecture-diagram:start -->
+<!-- project-setup:architecture-diagram:end -->
+```
+
+Inside the block:
+
+- show one current system architecture diagram directly;
+- use the manifest's `outputs.readme` path for static-image mode and confirm the declared SVG/PNG file exists;
+- use one parseable Mermaid block for `inline-mermaid` mode and do not retain a broken image reference;
+- link readers to `docs/architecture.md`, `docs/architecture/changes/`, and the optional interactive artifact when it exists;
+- preserve every README section outside the markers.
+
+Do not add timestamp-only changes. Diagram and README changes must follow a real architecture fact change or correction.
+
+## Completion Evidence
+
+Architecture synchronization is complete only when all applicable checks are true:
+
+- current facts match the implemented code and boundaries;
+- exactly one new semantic change record exists;
+- provider source and stable output describe the same component identities and relationships;
+- required provider validation succeeded and its receipt identifies the candidate when supported;
+- comparison evidence exists when configured and applicable;
+- the README block is unique and renders the current valid diagram;
+- local links resolve and no stale provider artifact is presented as current.
+
+Record unavailable external capabilities as `[BLOCKED]`, inapplicable optional capabilities as `[N/A]`, and executed failures as `[FAIL]`. Never convert them to `[PASS]` to finish the task.

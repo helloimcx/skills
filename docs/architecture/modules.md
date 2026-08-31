@@ -4,6 +4,6 @@ This index links architecture documents for larger independent modules added or 
 
 | Module | Responsibility | Architecture |
 |---|---|---|
-| `project-setup` | Independently initialize and cold-start verify new or agreed bootstrap-only software projects | [Project Setup](modules/project-setup.md) |
+| `project-setup` | Independently initialize, establish durable cross-Agent architecture governance, and cold-start verify new or agreed bootstrap-only software projects | [Project Setup](modules/project-setup.md) |
 
 Each module document describes current responsibilities, public interfaces, dependency boundaries, and core flow. Update the relevant document in the same change when those facts change.

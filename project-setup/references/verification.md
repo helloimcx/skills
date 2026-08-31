@@ -138,6 +138,8 @@ Secret / SAST
 - Unit、Integration、E2E 是否覆盖最小主路径？Bug 修复是否先有 Regression Test？复杂流程是否需要 Gherkin？
 - format check、lint、typecheck、完整 tests、build 和适用安全检查是否全部通过？
 - `docs/architecture.md`、Spec、Plan、ADR 和 README 是否与真实代码一致？
+- 根 `AGENTS.md` 是否只保留架构影响触发器、按需策略路径和完成不变量，`CLAUDE.md` 是否在保留已有内容的同时只导入一次 `@AGENTS.md`？
+- `docs/architecture/maintenance.md`、初始变更记录、diagram provider manifest、provider source/receipt 和 README 当前图是否存在且相互一致？active provider 或 fallback 是否经过真实 validation，失败是否如实标记？
 - 是否残留 TODO、Mock、debug 输出、Dead Code、临时脚本或未解释例外？
 
 正确性优先于可维护性，可维护性优先于简单性，简单性优先于未经测量的性能优化，以上均优先于交付速度。流程本身不能成为无意义复杂度的来源。

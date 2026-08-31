@@ -22,7 +22,7 @@ Skills are installed by copying folders directly to `~/.claude/skills/`.
 
 ### project-setup
 - **目录**: `project-setup/`
-- **功能**: 独立、安全地初始化具备架构、Docs as Code、测试体系、质量门禁、可观测性和安全默认值的新软件项目
+- **功能**: 独立、安全地初始化具备可持续架构治理、Codex/Claude Code 共享规则、replaceable diagram provider、Docs as Code、测试体系、质量门禁、可观测性和安全默认值的新软件项目
 - **文件**: `project-setup/SKILL.md`
 
 ### vibe-coding

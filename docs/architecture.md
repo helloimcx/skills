@@ -27,7 +27,7 @@ Detailed documents for larger independent modules are indexed in [architecture/m
 | Module | Responsibility | Dependencies |
 |---|---|---|
 | `vibe-coding` | Risk-adjusted coding lifecycle: planning, approval, TDD, documentation sync, review, and QA | Self-contained references |
-| `project-setup` | Safe, stack-aware initialization and cold-start verification of new production-oriented projects | Self-contained references |
+| `project-setup` | Safe, stack-aware initialization, durable cross-Agent architecture governance, and cold-start verification of new production-oriented projects | Self-contained references and a generated-policy asset; optional replaceable diagram provider |
 | `code-duplication-scanner` | Detect duplication between Git changes and an existing codebase | Local Python helper and refactoring reference |
 | `d2` | D2 diagram authoring guidance and examples | Self-contained D2 references/assets |
 | `github-arch-analyzer` | Repository architecture analysis and Chinese Markdown reporting | Optionally uses a diagram skill when available |
@@ -55,7 +55,7 @@ flowchart TD
 
 ## Project Setup Flow
 
-`project-setup` resolves a safe target and project profile, creates the minimum baseline, proves it through public-path and clean-environment verification, reports evidence, and stops. It neither embeds a universal application template nor transfers control to a general development workflow.
+`project-setup` resolves a safe target and project profile, creates the minimum baseline, emits a durable architecture-maintenance contract for later Codex and Claude Code tasks, proves the cold start, reports evidence, and stops. It neither embeds a universal application template nor transfers control to a general development workflow. Later coding tasks follow generated repository guidance without invoking `project-setup` again.
 
 ```mermaid
 flowchart LR
@@ -64,7 +64,9 @@ flowchart LR
     C --> D["Official scaffold or minimal manual baseline"]
     D --> E["Runnable vertical slice"]
     E --> F["Docs, tests, quality gates, security and observability"]
-    F --> G["Clean-environment verification"]
+    F --> P["Cross-Agent architecture router and on-demand policy"]
+    P --> R["Replaceable provider and current README diagram"]
+    R --> G["Clean-environment verification"]
     G --> H["Evidence report and stop"]
 ```
 
