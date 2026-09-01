@@ -14,7 +14,8 @@
 - Generate a short root `AGENTS.md` architecture-impact router and a preserving `@AGENTS.md` import for Claude Code, while keeping detailed maintenance behavior in a repository-local on-demand policy.
 - Keep current architecture facts and semantic change history independent of a replaceable diagram provider; prefer Archify when available and use an explicit fallback otherwise.
 - Establish one managed README block that directly shows the latest validated system architecture diagram without overwriting unrelated README content.
-- Verify applicable quality gates, public success/failure paths, and a candidate-only clean-environment bootstrap.
+- Configure and execute the five requested source-quality categories as hard initialization gates: cyclomatic complexity, duplicate-code rate, dependency-cycle count, dead-code count, and long-function/large-file counts.
+- Verify the mandatory static-quality gates, other applicable quality gates, public success/failure paths, and a candidate-only clean-environment bootstrap.
 - Report evidence and end the initialization task.
 
 ## Boundaries and Non-responsibilities
@@ -63,7 +64,7 @@ Dependencies stay inside the package: the entrypoint routes to its references an
 
 ## Validation
 
-- Package contracts verify discovery metadata, required files, local links, placeholder removal, progressive disclosure, cross-Agent routing, provider replaceability, README/history synchronization, and absence of workflow-skill coupling.
+- Package contracts verify discovery metadata, required files, local links, placeholder removal, progressive disclosure, cross-Agent routing, provider replaceability, README/history synchronization, hard static-quality gate semantics, and absence of workflow-skill coupling.
 - Repository contracts copy the distributable skill into an isolated directory, run its package tests there, verify root inventory text, and require this module document/index.
 - The skill-creator validator checks package structure and frontmatter.
 - Independent forward tests exercise target protection, project generation, lock semantics, public paths, aggregate QA, clean-environment reproducibility, authorization boundaries, and the explicit stop condition.

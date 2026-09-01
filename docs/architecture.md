@@ -27,7 +27,7 @@ Detailed documents for larger independent modules are indexed in [architecture/m
 | Module | Responsibility | Dependencies |
 |---|---|---|
 | `vibe-coding` | Risk-adjusted coding lifecycle: planning, approval, TDD, documentation sync, review, and QA | Self-contained references |
-| `project-setup` | Safe, stack-aware initialization, durable cross-Agent architecture governance, and cold-start verification of new production-oriented projects | Self-contained references and a generated-policy asset; optional replaceable diagram provider |
+| `project-setup` | Safe, stack-aware initialization, durable cross-Agent architecture governance, mandatory static-quality gates, and cold-start verification of new production-oriented projects | Self-contained references and a generated-policy asset; optional replaceable diagram provider |
 | `code-duplication-scanner` | Detect duplication between Git changes and an existing codebase | Local Python helper and refactoring reference |
 | `d2` | D2 diagram authoring guidance and examples | Self-contained D2 references/assets |
 | `github-arch-analyzer` | Repository architecture analysis and Chinese Markdown reporting | Optionally uses a diagram skill when available |
@@ -63,7 +63,7 @@ flowchart LR
     B --> C["Minimal initialization blueprint"]
     C --> D["Official scaffold or minimal manual baseline"]
     D --> E["Runnable vertical slice"]
-    E --> F["Docs, tests, quality gates, security and observability"]
+    E --> F["Docs, tests, hard static-quality gates, security and observability"]
     F --> P["Cross-Agent architecture router and on-demand policy"]
     P --> R["Replaceable provider and current README diagram"]
     R --> G["Clean-environment verification"]

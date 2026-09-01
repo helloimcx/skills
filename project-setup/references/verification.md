@@ -41,7 +41,7 @@ BDD 场景描述行为，不与内部函数名或实现步骤绑定。
 
 ## 3. 质量门禁发现与设计
 
-优先采用语言和框架的标准工具。只加入与当前技术栈适配、能够维护的门禁。至少评估：
+优先采用语言和框架的标准工具。只加入与当前技术栈适配、能够维护的门禁。至少配置并接入：
 
 ```text
 typecheck / static analysis
@@ -54,21 +54,33 @@ regression tests
 build / package
 ```
 
-持续评估但不机械安装所有工具：
+### 3.1 五类硬门禁（六项可观测值）
+
+只要项目包含可执行源码，以下五类指标就是初始化完成的硬门禁；最后一类同时统计超长函数和超大文件两个零超限计数。所有可观测值都必须测量、执行并由聚合命令报告。项目可以选择更严格的阈值，但不能降低默认阈值或仅以“以后再接入”通过：
+
+| 门禁 | 默认阈值 | 通过条件 |
+|---|---:|---|
+| 圈复杂度 | 每个函数/方法 ≤ 10 | 超过阈值的函数/方法数量为 0 |
+| 重复代码率 | 分析源码的 ≤ 5% | 测得重复代码率不超过阈值 |
+| 循环依赖数量 | 0 | 生产依赖图中不存在循环 |
+| Dead Code | 0 | 生产 Dead Code 发现数量为 0 |
+| 超长函数 | 每个函数/方法 ≤ 80 个逻辑源码行 | 超过阈值的函数/方法数量为 0 |
+| 超大文件 | 每个生产源码文件 ≤ 500 行 | 超过阈值的文件数量为 0 |
+
+每个项目必须在其规范的质量配置（例如 `pyproject.toml`、`package.json`、Makefile）或 `docs/quality-gates.md` 中记录：指标定义、分析范围、排除项、工具与版本、执行命令和阈值。工具的指标口径不同于上表时，必须写出可审计的映射；不能静默替换成另一种度量。
+
+硬门禁必须由单一 `verify`、`qa` 或 `check` 聚合入口执行。命令非零、阈值违反、分析器缺失、报告过期、结果不可复核或未经配置的排除项，都必须记为 `[FAIL]` 或 `[BLOCKED]`，不能记为 `[PASS]`。只有没有可执行源码时，才可以把这些指标标记为 `[N/A]`，并在 Spec/QA 中说明证据。生成代码或 vendor 代码只有在提交的、窄范围、可审查配置中排除；排除不能掩盖生产代码问题。
+
+其他质量项按项目风险评估，但不得因此省略上述五项硬门禁：
 
 ```text
 测试通过率与有效覆盖
-圈复杂度
-重复代码
-循环依赖
-Dead Code
-超长函数和超大文件
 静态类型与 Lint 错误
 Secret / SAST
 依赖与许可证漏洞
 ```
 
-提供单一聚合命令（例如生态惯例中的 `verify`、`qa`、`check`），并确保 CI 调用相同入口。最终格式门禁必须是非修改型检查；自动格式化后重新检查 Git diff。
+确保 CI 调用相同聚合入口。最终格式门禁必须是非修改型检查；自动格式化后重新检查 Git diff。
 
 禁止通过以下方式获得绿色结果：
 
@@ -78,7 +90,7 @@ Secret / SAST
 - 只运行修改点测试并把它称为完整测试；
 - 把未安装、超时或外部服务不可用标记为通过。
 
-合理例外需要最小范围、明确原因、所有者和退出条件，并在完成报告中可见。
+除无可执行源码的 `[N/A]` 和提交配置中明确限定的 generated/vendor 范围外，任何例外都不能豁免上述硬门禁。已有问题的迁移 baseline 必须继续报告为 `[FAIL]`，直到实际结果达到阈值；不得仅凭授权、所有者或退出日期标记为 `[PASS]`。
 
 ## 4. 真实主路径
 
@@ -121,6 +133,11 @@ Secret / SAST
 [PASS] unit: <command> — <count/result>
 [PASS] integration: <command> — <count/result>
 [PASS] e2e: <command> — <public path>
+[PASS] complexity: <command> — <max/result>
+[PASS] duplication: <command> — <rate/result>
+[PASS] dependency-cycles: <command> — <count/result>
+[PASS] dead-code: <command> — <count/result>
+[PASS] size: <command> — <long-function-count, large-file-count>
 [PASS] build: <command> — <artifact>
 [BLOCKED] external smoke: <missing dependency and impact>
 ```

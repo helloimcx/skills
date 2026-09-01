@@ -269,6 +269,60 @@ class ProjectSetupSkillContractTests(unittest.TestCase):
 
         self.assertEqual([], leftovers, f"unfinished initializer placeholders: {leftovers}")
 
+    def test_requested_static_quality_metrics_are_hard_gates(self) -> None:
+        verification = (SKILL_DIR / "references" / "verification.md").read_text(
+            encoding="utf-8"
+        )
+        baseline = (SKILL_DIR / "references" / "production-baseline.md").read_text(
+            encoding="utf-8"
+        )
+        entrypoint = (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")
+        combined = f"{verification}\n{baseline}\n{entrypoint}"
+        hard_gate_section = verification.split("### 3.1", 1)[1].split(
+            "其他质量项", 1
+        )[0]
+
+        for metric in (
+            "圈复杂度",
+            "重复代码率",
+            "循环依赖数量",
+            "Dead Code",
+            "超长函数",
+            "超大文件",
+        ):
+            self.assertIn(metric, combined)
+            self.assertIn(metric, hard_gate_section)
+
+        for invariant in (
+            "硬门禁",
+            "verify",
+            "qa",
+            "check",
+            "5%",
+            "80",
+            "500",
+            "[BLOCKED]",
+            "[N/A]",
+            "[FAIL]",
+        ):
+            self.assertIn(invariant, hard_gate_section + baseline + entrypoint)
+
+        self.assertIn("必须由单一", hard_gate_section)
+        self.assertIn("所有可观测值都必须测量、执行并由聚合命令报告", hard_gate_section)
+
+        for threshold in (
+            "≤ 10",
+            "≤ 5%",
+            "| 循环依赖数量 | 0 |",
+            "| Dead Code | 0 |",
+            "≤ 80",
+            "≤ 500",
+        ):
+            self.assertIn(threshold, hard_gate_section)
+
+        self.assertNotIn("持续评估但不机械安装所有工具", verification)
+        self.assertNotIn("按项目风险接入覆盖率、复杂度、重复、循环依赖、Dead Code", baseline)
+
 
 if __name__ == "__main__":
     unittest.main()

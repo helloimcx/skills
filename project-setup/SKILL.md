@@ -49,7 +49,7 @@ description: Initialize or scaffold a new software project with a safe, producti
 5. 创建最小公共入口和一条可观察行为。包含自定义行为时先写有效失败测试，再按 `RED → GREEN → REFACTOR` 实现；纯脚手架配置和文档使用结构、解析、命令或链接检查，不伪造代码级 RED。
 6. 建立 Unit、Integration、E2E、Regression 的测试约定和聚合入口。只实现适用且有价值的层级；无真实边界或历史 Bug 时记录 `[N/A]`，不得用空断言、skip、ignore 或虚假基础设施凑数。
 7. 创建并填写 `docs/architecture.md`、bootstrap Spec、bootstrap Plan 和必要 ADR，使 `docs/specs/`、`docs/plans/`、`docs/decisions/` 都由真实内容承载。按架构治理初始化契约，增量生成短小的根 Agent 路由、按需加载的维护策略、工具无关的初始历史、replaceable diagram provider manifest，以及 README 中的当前架构图；保留已有指令和文档内容。
-8. 配置项目实际支持的 format check、lint、type/static check、tests、build、安全/依赖检查和单一聚合命令。已知 CI 平台时让 CI 调用同一聚合入口；未知时不要擅自绑定托管平台。
+8. 配置项目实际支持的 format check、lint、type/static check、tests、build、安全/依赖检查、五类（六项可观测值）静态质量硬门禁和单一聚合命令。硬门禁必须测量圈复杂度、重复代码率、循环依赖数量、Dead Code、超长函数和超大文件，并记录阈值与证据。已知 CI 平台时让 CI 调用同一聚合入口；未知时不要擅自绑定托管平台。
 9. 在 README 中记录从干净 checkout 开始的安装、运行、测试、构建和验证命令，不依赖本机绝对路径、个人缓存或隐式全局工具。
 
 初始化过程中发现缺陷时，先最小复现并定位根因；为真实缺陷增加 Regression Test 后修复，不叠加 workaround，也不为了绿色结果降低门禁。
@@ -61,7 +61,7 @@ description: Initialize or scaffold a new software project with a safe, producti
 - 从正式公共入口验证一个成功路径和一个关键失败路径；
 - 运行所有适用的静态检查、测试、build/package 和聚合质量命令；
 - 在干净环境验证安装、构建、测试与运行可复现；存在有意义锁文件时使用冻结/锁定模式；
-- 检查循环依赖、重复、复杂度、Dead Code、临时代码、调试输出、Secrets 和生成物内容；
+- 有可执行源码时，执行并通过圈复杂度、重复代码率、循环依赖数量、Dead Code、超长函数和超大文件六项静态质量硬门禁；没有可执行源码时，逐项以证据标记 `[N/A]`。同时检查临时代码、调试输出、Secrets 和生成物内容；
 - 验证根 `AGENTS.md` 路由、Claude Code 的共享导入、架构维护策略、provider manifest、初始变更记录和 README 当前图相互一致；绘图 provider 不可用时使用声明的 fallback，不得静默安装或谎报验证成功；
 - 对照初始化验收标准记录 `[PASS]`、`[FAIL]`、`[BLOCKED]` 或 `[N/A]` 及证据；未执行的检查不得标记为通过；
 - 同步 README、架构、bootstrap Spec/Plan 和 ADR，使文档与真实产物一致。
