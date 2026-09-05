@@ -100,6 +100,7 @@
 
 最终方案保持结论先行、简洁、清晰、易懂。附一小段“关键取舍”，只解释真正影响设计的决策。
 
-同时附一张紧凑的 Mermaid 或 ASCII 方案示意图，展示目标入口、关键模块或数据流及预期结果；用户批准后将该图保留在 Plan 文档中。
+同时，在独立 worktree 中调用 `archify compare` 生成 `docs/architecture/changes/YYYY-MM-DD-<task-slug>.html` 架构对比图（或调用 `archify deliver` 生成对应的 workflow/sequence/lifecycle 交互画布），直观呈现改动前后的状态差异；Plan 文档中直接以相对链接引用该 HTML 画布。若环境未安装 Archify CLI 或属于未接入 AaC 的项目，使用声明式 fallback（紧凑 Mermaid/ASCII 示意图）。
 
 然后进入唯一一次用户 Approval Gate。
+
