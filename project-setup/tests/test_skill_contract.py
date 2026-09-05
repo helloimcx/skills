@@ -323,6 +323,73 @@ class ProjectSetupSkillContractTests(unittest.TestCase):
         self.assertNotIn("持续评估但不机械安装所有工具", verification)
         self.assertNotIn("按项目风险接入覆盖率、复杂度、重复、循环依赖、Dead Code", baseline)
 
+    def test_architecture_matrix_defines_l1_l2_l3_hierarchy(self) -> None:
+        governance = (
+            SKILL_DIR / "references" / "architecture-governance.md"
+        ).read_text(encoding="utf-8")
+        baseline = (
+            SKILL_DIR / "references" / "production-baseline.md"
+        ).read_text(encoding="utf-8")
+        policy = (
+            SKILL_DIR / "assets" / "architecture-maintenance.md"
+        ).read_text(encoding="utf-8")
+        skill = (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")
+
+        for term in (
+            "system-architecture.json",
+            "workflow.json",
+            "sequence.json",
+            "lifecycle.json",
+            "overview.md",
+        ):
+            self.assertIn(term, governance)
+            self.assertIn(term, baseline)
+            self.assertIn(term, policy)
+
+        self.assertIn("L1", governance)
+        self.assertIn("L2", governance)
+        self.assertIn("L3", governance)
+        self.assertIn("L1-L3", skill)
+
+    def test_architecture_lint_gate_is_specified(self) -> None:
+        governance = (
+            SKILL_DIR / "references" / "architecture-governance.md"
+        ).read_text(encoding="utf-8")
+        verification = (
+            SKILL_DIR / "references" / "verification.md"
+        ).read_text(encoding="utf-8")
+        baseline = (
+            SKILL_DIR / "references" / "production-baseline.md"
+        ).read_text(encoding="utf-8")
+        skill = (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")
+        policy = (
+            SKILL_DIR / "assets" / "architecture-maintenance.md"
+        ).read_text(encoding="utf-8")
+
+        for doc in (governance, verification, baseline, skill, policy):
+            self.assertIn("lint:arch", doc)
+
+        self.assertIn("showcase", governance)
+        self.assertIn("archify validate", governance)
+        self.assertIn("0 错误", governance)
+
+    def test_dual_theme_and_interactive_delivery_contract(self) -> None:
+        governance = (
+            SKILL_DIR / "references" / "architecture-governance.md"
+        ).read_text(encoding="utf-8")
+        policy = (
+            SKILL_DIR / "assets" / "architecture-maintenance.md"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("<picture>", governance)
+        self.assertIn("<picture>", policy)
+        self.assertIn(".dark.png", governance)
+        self.assertIn(".light.png", governance)
+        self.assertIn(".dark.png", policy)
+        self.assertIn(".light.png", policy)
+        self.assertIn(".html", policy)
+
 
 if __name__ == "__main__":
     unittest.main()
+

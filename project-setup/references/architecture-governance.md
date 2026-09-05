@@ -12,7 +12,7 @@
 - 若已有规则与本契约冲突，先保留更严格且与项目事实一致的规则，再在初始化证据中说明合并结果；
 - 不把用户级 Agent 配置、全局 skill 安装或个人绝对路径写入仓库。
 
-## 2. 建立工具无关的架构事实
+## 2. 建立工具无关的架构事实与分层规范矩阵
 
 `docs/architecture.md` 是当前架构的事实入口，而不是某个绘图工具的说明书。至少记录真实存在的：
 
@@ -22,6 +22,17 @@
 - 数据所有权、存储与主要数据流；
 - 外部集成、部署边界和信任边界；
 - 当前图、provider manifest 和变更历史的位置。
+
+### 2.1 L1-L2-L3 分层架构规范矩阵 (Architecture Matrix)
+
+复杂系统应采用分级 Architecture-as-Code 规范，避免将全系统细节堆叠在单张图上。规范文件统一存放在 `docs/architecture/`，支持版本化与静态校验：
+
+- **L1 - 系统架构 (System Architecture)**：系统顶层分层职责、主要模块、数据存储、跨边界与网络/部署拓扑（推荐命名：`system-architecture.json` 或 `system.architecture.json`）。
+- **L2 - 关键工作流与时序 (Workflows & Sequences)**：
+  - 核心业务处理工作流（推荐命名：`*.workflow.json`，如调度、分发、流水线编排）。
+  - 关键协议交互与跨进程通信时序（推荐命名：`*.sequence.json`，如会话握手、协议协商、消息生命周期）。
+- **L3 - 核心实体生命周期 (Lifecycles & State Machines)**：核心领域实体或执行任务的有限状态机、状态流转、守卫条件与动作（推荐命名：`*.lifecycle.json`）。
+- **全景矩阵大盘 (`docs/architecture/overview.md`)**：以结构化表格建立 L1-L3 架构全景矩阵索引，集中关联各层级规范源文件、对应交互 HTML 画布、浅深色渲染图与深度设计文档，形成双向导航。
 
 创建 `docs/architecture/changes/YYYY-MM-DD-bootstrap.md` 作为初始基线记录，说明初始化时实际建立的组件、边界、provider 和证据。后续每次 `Architecture Impact: Required` 追加一个独立语义变更记录；不要在当前架构文档中累积过期版本。
 
@@ -120,6 +131,15 @@ readme:
 
 Archify（[repository](https://github.com/tt-a1i/archify)）是首选画图 provider，不是 hard dependency。若已安装，先在执行时发现实际 skill/CLI 位置和版本，再遵循其自身 skill 的当前说明完成 source authoring、validation、可信交付、静态 README 导出和可用时的 Architecture Delta；将实际 provider、版本、输入和 validation/delivery receipt 记录到 provider receipt 或变更记录。不得静默安装 Archify、修改全局 Agent 配置，或在 validation 失败后覆盖 last-known-good 产物。
 
+### 4.1 自动化架构防腐门禁 (lint:arch)
+
+为防止架构规范与源码实现脱节、语法损坏或布局退化，项目应建立自动化架构门禁（如 `scripts/lint-architecture.mjs` 或语言原生对应脚本）：
+
+1. 自动发现 `docs/architecture/` 下所有架构规范：`system-architecture.json`、`*.workflow.json`、`*.sequence.json`、`*.lifecycle.json`；
+2. 当 active provider 为 Archify 时，调用 `archify validate <type> <file> --quality showcase` 检验规范 Schema 合法性与 9 项展示级质量指标（节点无重叠、连线无交叉、标签对齐、流向一致、主题自适应等）；
+3. 在项目规范命令（如 `package.json` 的 `"lint:arch"`、Makefile 或 pyproject.toml）中提供入口，并将其纳入 CI 门禁与聚合验证（`verify` / `qa` / `lint:gates`）；
+4. 任何规范解析错误、Showcase 违规或图表陈旧均直接退出非零码，阻断集成。
+
 ## 5. 初始化 README 架构区块
 
 在根 README 中只创建或更新一次：
@@ -129,9 +149,9 @@ Archify（[repository](https://github.com/tt-a1i/archify)）是首选画图 prov
 <!-- project-setup:architecture-diagram:end -->
 ```
 
-在两个 marker 之间写入项目实际的架构标题、当前静态图或 inline Mermaid，以及当前架构事实和变更历史链接。
+在两个 marker 之间写入项目实际的架构标题、当前静态图或 inline Mermaid，以及当前架构事实、全景矩阵大盘和变更历史链接。
 
-静态图必须使用 manifest 中声明的仓库相对路径（可以是 SVG 或 PNG）并真实存在；交互 HTML 只作为附加链接，不能替代 README 中可直接看到的当前图。fallback 为 Mermaid 时直接在 managed block 内保留与当前架构一致的单张图。不得覆盖 README 的其他章节。
+静态图必须使用 manifest 中声明的仓库相对路径（推荐使用 `<picture>` 标签分别自适应深色与浅色主题，如 `.dark.png` 和 `.light.png`，或 SVG）并真实存在；交互 HTML 画布作为附加探索链接，不能替代 README 中可直接看到的当前图。fallback 为 Mermaid 时直接在 managed block 内保留与当前架构一致的单张图。不得覆盖 README 的其他章节。
 
 ## 6. 初始化验收
 
@@ -139,8 +159,10 @@ Archify（[repository](https://github.com/tt-a1i/archify)）是首选画图 prov
 
 - 根 Agent 路由短小、唯一、指向存在的 `docs/architecture/maintenance.md`；
 - Claude Code 能通过一次 `@AGENTS.md` 导入获得同一规则；
-- `docs/architecture.md`、bootstrap history、manifest、provider source/receipt 与 README 描述相互一致；
-- README managed block 唯一，静态链接存在或 inline Mermaid 可解析；
+- `docs/architecture.md`、`docs/architecture/overview.md` 全景矩阵、bootstrap history、manifest、provider source/receipt 与 README 描述相互一致；
+- L1-L3 架构规范矩阵文件存在，命名符合规范（`system-architecture.json`、`*.workflow.json`、`*.sequence.json`、`*.lifecycle.json`）；
+- 自动化架构门禁 `lint:arch` 执行通过（0 错误、0 警告）；
+- README managed block 唯一，静态链接或 `<picture>` 资源存在，或 inline Mermaid 可解析；
 - active provider 的必需 validation 成功；使用 fallback 时 manifest 和证据如实反映；
 - provider 不可用、导出失败或产物陈旧时记录 `[BLOCKED]` 或 `[FAIL]`，不得标记 `[PASS]`；
 - 初始化不依赖 `project-setup` 在后续开发任务中再次被调用。

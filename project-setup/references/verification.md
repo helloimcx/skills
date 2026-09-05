@@ -46,6 +46,7 @@ BDD 场景描述行为，不与内部函数名或实现步骤绑定。
 ```text
 typecheck / static analysis
 lint
+lint:arch / architecture static validation
 format check
 unit tests
 integration tests
@@ -133,6 +134,7 @@ Secret / SAST
 [PASS] unit: <command> — <count/result>
 [PASS] integration: <command> — <count/result>
 [PASS] e2e: <command> — <public path>
+[PASS] architecture: <lint:arch command> — <specs-count passed>
 [PASS] complexity: <command> — <max/result>
 [PASS] duplication: <command> — <rate/result>
 [PASS] dependency-cycles: <command> — <count/result>
@@ -156,7 +158,7 @@ Secret / SAST
 - format check、lint、typecheck、完整 tests、build 和适用安全检查是否全部通过？
 - `docs/architecture.md`、Spec、Plan、ADR 和 README 是否与真实代码一致？
 - 根 `AGENTS.md` 是否只保留架构影响触发器、按需策略路径和完成不变量，`CLAUDE.md` 是否在保留已有内容的同时只导入一次 `@AGENTS.md`？
-- `docs/architecture/maintenance.md`、初始变更记录、diagram provider manifest、provider source/receipt 和 README 当前图是否存在且相互一致？active provider 或 fallback 是否经过真实 validation，失败是否如实标记？
+- `docs/architecture.md`、`docs/architecture/overview.md` 全景矩阵、`docs/architecture/maintenance.md`、L1-L3 规范矩阵、初始变更记录、diagram provider manifest、provider source/receipt 和 README 当前图是否存在且相互一致？自动化架构门禁 `lint:arch` 是否通过（0 错误 0 警告）？active provider 或 fallback 是否经过真实 validation，失败是否如实标记？
 - 是否残留 TODO、Mock、debug 输出、Dead Code、临时脚本或未解释例外？
 
 正确性优先于可维护性，可维护性优先于简单性，简单性优先于未经测量的性能优化，以上均优先于交付速度。流程本身不能成为无意义复杂度的来源。

@@ -23,8 +23,13 @@
 docs/
 ├── architecture.md
 ├── architecture/
+│   ├── overview.md
 │   ├── maintenance.md
 │   ├── diagram-provider.yaml
+│   ├── system-architecture.json
+│   ├── *.workflow.json
+│   ├── *.sequence.json
+│   ├── *.lifecycle.json
 │   └── changes/
 │       └── YYYY-MM-DD-bootstrap.md
 ├── specs/
@@ -32,7 +37,7 @@ docs/
 └── decisions/
 ```
 
-- `architecture.md`：系统目标与上下文、模块边界、依赖方向、公共入口、核心数据流、配置与运行边界、外部依赖、信任边界。只描述当前真实实现。`architecture/maintenance.md`、`diagram-provider.yaml` 和 `changes/` 按架构治理契约承载后续 Agent 按需加载的维护规则、可替换绘图 provider 和语义变更历史。
+- `architecture.md`：系统目标与上下文、模块边界、依赖方向、公共入口、核心数据流、配置与运行边界、外部依赖、信任边界。只描述当前真实实现。`architecture/overview.md` 统一承载 L1-L3 架构规范矩阵索引；`architecture/maintenance.md`、`diagram-provider.yaml`、规范源文件（`system-architecture.json`、`*.workflow.json`、`*.sequence.json`、`*.lifecycle.json`）和 `changes/` 按架构治理契约承载后续 Agent 按需加载的维护规则、可替换绘图 provider、版本化规范和语义变更历史。
 - `specs/<feature>.md`：复杂功能的 Goal、Scope、Non-goals、行为/接口、约束/兼容性和可验证验收标准。初始化时保存 bootstrap Spec。
 - `plans/<feature>.md`：可逐项实现、测试和验证的步骤、状态、涉及模块、接口/数据/配置变化以及 QA 顺序。初始化时保存 bootstrap Plan。
 - `decisions/<number>-<slug>.md`：记录影响长期维护的重要决策、上下文、备选项、结果和后果。技术选择或边界没有长期影响时不要为数量而写 ADR。
@@ -138,6 +143,7 @@ docs/
 ```text
 format / format-check
 lint
+lint:arch 或 lint-architecture
 typecheck 或 static-analysis
 test-unit
 test-integration
@@ -148,7 +154,7 @@ build
 verify / qa
 ```
 
-`verify`/`qa` 是本地聚合入口，按快速失败顺序运行非变更型格式检查、静态检查、五类（六项可观测值）静态质量硬门禁、完整测试和 build。格式化写入命令与 CI 使用的格式检查命令分开。
+`verify`/`qa` 是本地聚合入口，按快速失败顺序运行非变更型格式检查、静态检查、架构防腐门禁（`lint:arch`）、五类（六项可观测值）静态质量硬门禁、完整测试和 build。格式化写入命令与 CI 使用的格式检查命令分开。
 
 有可执行源码的项目必须把以下五类（六项可观测值）作为硬门禁，并在规范质量配置或 `docs/quality-gates.md` 中记录指标口径、范围、排除项、工具/版本、命令和阈值：
 
