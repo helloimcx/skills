@@ -65,3 +65,5 @@ Reviewer 必须同时检查：
 
 文档影响分析与必要的文档更新属于 Definition of Done。
 
+
+方案图格式遵循 [SKILL.md](../SKILL.md) 的分级规则：中等且无架构变化的任务仅需在 Plan 中嵌入简要 Mermaid，不要求 HTML 或架构变更语义记录；复杂任务继续使用 `/archify`。已声明 Archify 降级时，上述 HTML 一致性与成对归档检查改为检查 Plan 中的回退图、降级原因及语义记录引用。

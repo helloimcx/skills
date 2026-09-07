@@ -101,3 +101,5 @@ Reviewer 的心态：**尝试证明这段代码在真实场景下会失败。**
 - Uncertain → 通过代码、运行测试或最小复现验证。
 
 有效 Finding 修复后重新运行相关测试；如果改动影响 Review 结论，应再次调用独立 Reviewer。
+
+方案图格式遵循 [SKILL.md](../SKILL.md) 的分级规则：中等且无架构变化的任务仅需在 Plan 中嵌入简要 Mermaid，不要求 HTML 或架构变更语义记录；复杂任务继续使用 `/archify`。已声明 Archify 降级时，上述 HTML 一致性与成对归档检查改为检查 Plan 中的回退图、降级原因及语义记录引用。

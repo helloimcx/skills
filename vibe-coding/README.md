@@ -6,7 +6,7 @@
 
 - Inspect before asking：先读代码再 Grill；
 - 简单 / 中等 / 复杂三级流程；
-- 方案表达结论先行、简洁清晰；中等/复杂方案附 Mermaid 或 ASCII 示意图；
+- 方案表达结论先行、简洁清晰；中等任务有架构变化时使用 `/archify`，否则使用简要 Mermaid；复杂任务继续使用 `/archify`；
 - 复杂任务：3 个相同角色的独立 Subagent 并行规划，主 Agent 统一评判和综合；
 - 编码前唯一 Approval Gate；
 - 默认从最新 `origin/main` 或 `origin/master` 创建任务分支并在独立 Git worktree 开发；
@@ -17,7 +17,7 @@
 - 独立 Subagent Review；
 - Review / QA 失败自动回流；
 - 按任务风险执行适用的自动化测试与真实主路径验证；
-- 完成汇报附简洁 Mermaid 或 ASCII 改动示意图。
+- 完成汇报按同一分级规则附实际交付图；Archify 不可用时声明降级。
 
 ## 目录
 

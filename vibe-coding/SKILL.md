@@ -7,7 +7,7 @@ description: 面向实现功能、修复 Bug、重构和技术改造的端到端
 
 目标：以尽可能少的沟通成本，把需求稳定地变成**正确、简洁、可维护、经过真实验证**的代码。
 
-`理解需求 → 检查仓库 → 必要时澄清 → 复杂度分级 → (中等/复杂任务创建分支与 Worktree) → 方案/Spec+Plan (含 HTML 对比图/方案图) → 用户批准 → TDD 实现 → 架构与文档同步 (lint:arch) → 独立 Review → 真实 QA → 完成`
+`理解需求 → 检查仓库 → 必要时澄清 → 复杂度分级 → (中等/复杂任务创建分支与 Worktree) → 方案/Spec+Plan (按复杂度与架构影响配图) → 用户批准 → TDD 实现 → 架构与文档同步 (lint:arch) → 独立 Review → 真实 QA → 完成`
 
 ## 0. 核心原则
 
@@ -19,7 +19,7 @@ description: 面向实现功能、修复 Bug、重构和技术改造的端到端
 6. **复杂任务先并行规划，再集中裁决。** 3 个相同角色的独立 Subagent 分别求解，主 Agent 形成唯一最终方案。
 7. **TDD 是默认实现方式。** 遵循 `RED → GREEN → REFACTOR`；全部行为切片完成后，完整测试套件必须全部通过。
 8. **Review 和 QA 是质量门禁。** 验证深度按任务风险和项目能力选择，发现有效问题必须修复并重测。
-9. **文档必须反映当前代码。** 中等/复杂任务方案图使用 `archify compare` 或 `deliver` 生成交互式 HTML（存储于 `docs/architecture/changes/`），替换随意文本草图；实现完成后、Review 前必须通过 `lint:arch` 门禁并同步更新正式架构规范。
+9. **文档必须反映当前代码。** 中等任务有架构变化时使用 `/archify`，无架构变化时使用简要 Mermaid；复杂任务继续使用 `/archify`，HTML 产物存储于 `docs/architecture/changes/`；实现完成后、Review 前必须通过 `lint:arch` 门禁并同步更新正式架构规范。
 10. **优先最简单的正确方案。** 尊重现有架构，避免无需求支撑的抽象、框架和顺手重构。
 11. **Done 需要证据。** 相关验收标准、自动化测试和适用的真实主路径均有验证结论。
 
@@ -50,12 +50,14 @@ description: 面向实现功能、修复 Bug、重构和技术改造的端到端
 
 中等和复杂任务必须遵循以下规则：
 1. **沙箱隔离先行：** 判定为中等或复杂任务后，默认先获取 `origin` 最新状态，从实际存在的最新 `origin/main` 或 `origin/master` 创建任务分支与独立 `git worktree`（如 `task/YYYY-MM-DD-<task-slug>`），确保宿主工作区绝对纯净，所有方案分析、Spec、Plan 及图表均在 worktree 内生成。
-2. **Archify 方案图/对比图（替换原有纯文本草图）：** 方案必须附带一张可视化方案图，优先利用 Archify 生成高保真交互式 HTML 画布（或染色对比图），禁止使用随意的手绘文本草图：
-   - **架构/模块演进（Architecture Impact: Required）：** 调用 `archify compare architecture <base.json> <candidate.json> docs/architecture/changes/YYYY-MM-DD-<task-slug>.html` 生成 Before / Delta / After 染色对比图，直观呈现组件变更、依赖流转与边界差异；
-   - **业务流/时序/状态机新增或改造：** 调用 `archify deliver workflow|sequence|lifecycle <candidate.json> docs/architecture/changes/YYYY-MM-DD-<task-slug>.html --quality showcase` 生成高分辨率交互画布；
-   - **优雅降级（Fallback）：** 若环境未安装 Archify CLI 或属于未接入 AaC 的传统项目，明确标注 `[FALLBACK: mermaid]` 或 `[FALLBACK: ascii]`，使用紧凑 Mermaid/ASCII 示意图作为回退；
-   - **持久化位置：** 统一存储在 **`docs/architecture/changes/YYYY-MM-DD-<task-slug>.html`**（配合可选的 `*.candidate.json`），与该任务的架构变更语义记录成对归档，供用户在 Approval Gate 前在浏览器直观探索；
-3. **Plan 引用：** 在 `docs/plans/YYYY-MM-DD-<task-slug>.md` 中直接以相对路径引用此 HTML 对比图，作为后续 TDD 实施与 Review 的权威视觉承诺；
+2. **按复杂度与架构影响选择方案图：** 方案必须附带一张可视化方案图。先检查模块职责与边界、依赖关系、公共接口、数据模型、核心数据流或部署拓扑是否改变，并在 Plan 中记录 `Architecture Impact: Required` 或 `Architecture Impact: None` 及简要理由；不能仅凭修改文件数量或业务逻辑变化判定架构变化。
+   - **中等任务，有架构变化：** 使用 `/archify`，按下述方式生成 HTML 方案图/对比图。
+   - **中等任务，无架构变化：** 直接使用紧凑 Mermaid 展示相关入口、处理流程和预期结果；这是默认方案，不是 fallback，无需生成 HTML 或 candidate JSON。
+   - **复杂任务：** 无论是否有架构变化，继续使用 `/archify` 生成 HTML 方案图/对比图。
+   - **Archify 生成方式：** 架构/模块演进使用 `archify compare architecture <base.json> <candidate.json> docs/architecture/changes/YYYY-MM-DD-<task-slug>.html` 生成 Before / Delta / After 对比图；业务流/时序/状态机使用 `archify deliver workflow|sequence|lifecycle <candidate.json> docs/architecture/changes/YYYY-MM-DD-<task-slug>.html --quality showcase` 生成交互画布。
+   - **Archify 降级（Fallback）：** 需要 Archify 但环境未安装 CLI 或项目未接入 AaC 时，明确标注 `[FALLBACK: mermaid]` 或 `[FALLBACK: ascii]`，使用紧凑 Mermaid/ASCII 回退，并在 Plan 中说明原因。
+   - **HTML 持久化：** 仅在使用 Archify 时生成 `docs/architecture/changes/YYYY-MM-DD-<task-slug>.html`（配合可选的 `*.candidate.json`），供用户在 Approval Gate 前查看；涉及架构变化时，与该任务的架构变更语义记录成对归档。
+3. **Plan 保留方案图：** 在 `docs/plans/YYYY-MM-DD-<task-slug>.md` 中嵌入 Mermaid 代码块；使用 Archify 时以相对路径引用 HTML；降级时保留回退图及原因，作为后续实施与 Review 的视觉基线。
 4. **方案图 vs 汇报图：** 方案阶段的图是**“设计预期与变更承诺 (Expected / Delta)”**；任务完成时仍需生成反映实际代码落地的**“交付图 (Actual As-Built)”**。
 
 ### 简单任务
@@ -64,16 +66,16 @@ description: 面向实现功能、修复 Bug、重构和技术改造的端到端
 
 ### 中等任务
 
-提交可执行的 **Spec + Plan**，并附带生成的 HTML 方案图/对比图路径，然后等待批准：
+提交可执行的 **Spec + Plan**，有架构变化时附 `/archify` 生成的 HTML 方案图/对比图路径，无架构变化时附简要 Mermaid，然后等待批准（Archify 不可用时按上述规则降级）：
 
 - Spec：Goal、Scope、Non-goals、Behavior / Interface、Constraints / Compatibility、Acceptance Criteria。
-- Plan：有顺序的修改步骤、涉及模块或文件、数据 / API / 配置变化、测试策略、验证顺序、方案图链接。
+- Plan：有顺序的修改步骤、涉及模块或文件、数据 / API / 配置变化、测试策略、验证顺序、架构影响结论、内嵌方案图或图链接。
 
 ### 复杂任务
 
 读取并执行 [references/parallel-planning.md](references/parallel-planning.md)：并行召唤 3 个接收相同任务与核心上下文的独立 Subagent，由主 Agent 比较正确性、简洁性、架构契合度、可维护性、兼容性、风险、可测试性和完整性。
 
-主 Agent 只向用户提交一个最终权威版 Spec + Plan，附生成的 HTML 方案图/对比图路径，并简要说明关键取舍，然后等待批准。
+主 Agent 只向用户提交一个最终权威版 Spec + Plan，附 `/archify` 生成的 HTML 方案图/对比图路径（不可用时附回退图及原因），并简要说明关键取舍，然后等待批准。
 
 所有 Acceptance Criteria 必须可验证，避免“功能正常”“性能良好”等不可执行表述。
 
@@ -98,12 +100,12 @@ description: 面向实现功能、修复 Bug、重构和技术改造的端到端
 中等和复杂任务必须遵守：
 
 1. **时机：** 用户批准前在 worktree 内生成最终版本，批准后作为只读实施基线；聊天消息或临时计划工具不能代替仓库文档。
-2. **位置：** Markdown 文档位于仓库根目录的 `docs/` 下，方案 HTML 对比图位于 `docs/architecture/changes/` 下。
-3. **命名：** 固定使用 `docs/specs/YYYY-MM-DD-<task-slug>.md`、`docs/plans/YYYY-MM-DD-<task-slug>.md` 和 `docs/architecture/changes/YYYY-MM-DD-<task-slug>.html`。日期取首次持久化时的本地日期；文档使用相同日期与小写 kebab-case task slug，后续更新不得改名。
+2. **位置：** Markdown 文档位于仓库根目录的 `docs/` 下，Mermaid 方案图嵌入 Plan；使用 Archify 时，HTML 方案图/对比图位于 `docs/architecture/changes/` 下。
+3. **命名：** 固定使用 `docs/specs/YYYY-MM-DD-<task-slug>.md`、`docs/plans/YYYY-MM-DD-<task-slug>.md`；使用 Archify 时另生成 `docs/architecture/changes/YYYY-MM-DD-<task-slug>.html`。日期取首次持久化时的本地日期；文档使用相同日期与小写 kebab-case task slug，后续更新不得改名。
 4. **创建：** 目标目录不存在时创建；不得覆盖无关文档。恢复已有任务时优先更新现有文件，不创建重复版本。
 5. **同步：** 已批准的 Scope、行为、接口、Acceptance Criteria 或实施步骤发生必要变更时，先同步对应文档与图表，再继续受影响的实现。
 
-Spec 和 Plan 必须自包含，并保留上一节规定的必要字段与方案图引用。
+Spec 和 Plan 必须自包含，并保留上一节规定的必要字段与内嵌方案图或图引用。
 
 ---
 
@@ -133,7 +135,7 @@ Spec 和 Plan 必须自包含，并保留上一节规定的必要字段与方案
 
 - **若判定为 `Architecture Impact: Required`：**
   1. 更新 `docs/architecture/` 下的正式 L1-L3 规范（`system-architecture.json`、`*.workflow.json`、`*.sequence.json`、`*.lifecycle.json`）；
-  2. 完善 `docs/architecture/changes/YYYY-MM-DD-<task-slug>.md` 语义变更记录，与方案阶段生成的 `YYYY-MM-DD-<task-slug>.html` 对比图形成成对归档；
+  2. 完善 `docs/architecture/changes/YYYY-MM-DD-<task-slug>.md` 语义变更记录，与方案阶段生成的 `YYYY-MM-DD-<task-slug>.html` 对比图形成成对归档；已声明 Archify 降级时，改为引用 Plan 中的回退图与原因；
   3. 执行项目架构防腐门禁（如 `lint:arch`），必须通过 Schema 与 Showcase 质量检查（0 错误、0 警告）；
   4. 同步更新 `docs/architecture/overview.md` 全景矩阵大盘与 README managed block。
 - **若无架构与文档影响：** 明确记录 `Docs Impact: None`。
@@ -150,7 +152,7 @@ Spec 和 Plan 必须自包含，并保留上一节规定的必要字段与方案
 
 - 简单任务：Adversarial Review；
 - 中等任务：Spec Verifier + Cleaner；
-- 复杂任务：再增加 Architect Review（重点验证实现是否与已批准的 `docs/architecture/changes/YYYY-MM-DD-<task-slug>.html` 方案图/对比图一致，以及 L1-L3 规范和 `lint:arch` 门禁状态）。
+- 复杂任务：再增加 Architect Review（重点验证实现是否与已批准的 `docs/architecture/changes/YYYY-MM-DD-<task-slug>.html` 方案图/对比图（或已声明的回退图）一致，以及 L1-L3 规范和 `lint:arch` 门禁状态）。
 
 主 Agent 验证每条 Finding，不机械接受意见。有效问题进入：
 
@@ -196,5 +198,5 @@ QA 失败时执行：
 
 最终汇报保持简洁：说明实现内容、关键设计决定、测试与 QA 结果，以及仍存在的外部限制或风险。不要重复整份 Spec 或输出冗长工作日志。
 
-任务完成后，最终汇报必须附一张基于最终代码生成的真实**交付架构/流程图**（优先展示正式更新的 HTML 画布相对路径或双主题图片链接，未配置 Archify 时使用紧凑 Mermaid/ASCII 示意图），聚焦展示改动入口、实际落地改动点及其关系或影响，证明真实落地成果与最初方案承诺的一致性。
+任务完成后，最终汇报必须附一张基于最终代码生成的真实**交付架构/流程图**：中等任务按最终架构影响选择，有架构变化时使用 `/archify`，无架构变化时使用简要 Mermaid；复杂任务继续使用 `/archify`；简单任务使用简要 Mermaid/ASCII。Archify 交付图展示 HTML 画布或图片链接，不可用时按方案阶段规则声明降级。若实施中发现新的架构变化，先同步 Plan 的影响结论与方案图。交付图聚焦展示改动入口、实际落地改动点及其关系或影响，证明真实落地成果与最初方案承诺的一致性。
 
