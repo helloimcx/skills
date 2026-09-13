@@ -23,6 +23,26 @@ class VibeCodingContractTests(unittest.TestCase):
         missing = [str(p.relative_to(REPO_ROOT)) for p in required if not p.is_file()]
         self.assertEqual([], missing, f"missing required files: {missing}")
 
+    def test_approval_summary__uses_plain_language(self) -> None:
+        skill = (VIBE_CODING_DIR / "SKILL.md").read_text(encoding="utf-8")
+
+        for required_guidance in (
+            "给用户看的批准摘要",
+            "这次要解决什么",
+            "准备怎么做",
+            "怎么确认改好了",
+            "完整技术内容与聊天摘要分层",
+            "如果这个方案符合你的想法，我就开始修改。哪里需要调整，直接告诉我就行。",
+        ):
+            self.assertIn(required_guidance, skill)
+
+        self.assertIn(
+            "不要直接照搬 `Spec`、`Plan`、`Scope`、`Non-goals`、"
+            "`Acceptance Criteria`、`Architecture Impact`、`Approval Gate`",
+            skill,
+        )
+        self.assertIn("只有确实需要用户选择时", skill)
+
     def test_scheme_diagram_contract_in_skill_and_references(self) -> None:
         skill = (VIBE_CODING_DIR / "SKILL.md").read_text(encoding="utf-8")
         planning = (
