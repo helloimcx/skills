@@ -7,7 +7,7 @@ description: 面向实现功能、修复 Bug、重构和技术改造的端到端
 
 目标：以尽可能少的沟通成本，把需求稳定地变成**正确、简洁、可维护、经过真实验证**的代码。
 
-`理解需求 → 检查仓库 → 必要时澄清 → 复杂度分级 → (中等/复杂任务创建分支与 Worktree) → 方案/Spec+Plan (按复杂度与架构影响配图) → 用户批准 → TDD 实现 → 架构与文档同步 (lint:arch) → 独立 Review → 真实 QA → 完成`
+`理解需求 → 检查仓库 → 必要时澄清 → 复杂度分级 → 所有任务创建分支与 Worktree → 方案/Spec+Plan (按复杂度与架构影响配图) → 用户批准 → TDD 实现 → 架构与文档同步 (lint:arch) → 独立 Review → 真实 QA → 完成`
 
 ## 0. 核心原则
 
@@ -15,7 +15,7 @@ description: 面向实现功能、修复 Bug、重构和技术改造的端到端
 2. **只问阻塞问题。** 仅询问会显著改变行为、接口、数据或架构的歧义。
 3. **按风险分级。** 文件数量只是参考；任一高风险维度都可以升级复杂度。
 4. **编码前只有一个 Approval Gate。** 批准后自主执行到 Review 和 QA 完成，除非出现重大新风险、不可逆操作或需求矛盾。
-5. **默认隔离开发。** 中等和复杂任务在方案设计前即从最新 `origin/main` 或 `origin/master` 创建任务分支和独立 Git worktree，所有方案分析、规范草案、对比图与代码均在隔离沙箱中生成；简单任务在获批后或在隔离分支中执行。
+5. **所有复杂度均隔离开发。** 简单、中等和复杂任务都在方案设计前建立任务分支和独立 Git worktree，所有方案产物、代码修改与验证均在该 worktree 内完成。简单任务不得仅创建分支或直接在宿主工作区开发；具体规则见“沙箱隔离先行”。
 6. **复杂任务先并行规划，再集中裁决。** 3 个相同角色的独立 Subagent 分别求解，主 Agent 形成唯一最终方案。
 7. **TDD 是默认实现方式。** 遵循 `RED → GREEN → REFACTOR`；全部行为切片完成后，完整测试套件必须全部通过。
 8. **Review 和 QA 是质量门禁。** 验证深度按任务风险和项目能力选择，发现有效问题必须修复并重测。
@@ -67,21 +67,29 @@ description: 面向实现功能、修复 Bug、重构和技术改造的端到端
 - 明确停在批准步骤，不使用模糊的“接下来处理”“继续推进”等措辞假定用户已经同意。
 - 结尾自然邀请确认，默认写法是：**“如果这个方案符合你的想法，我就开始修改。哪里需要调整，直接告诉我就行。”** 可以根据上下文缩短或调整语气，但必须同时表达“等你确认后再改”和“可以提出调整”。
 
-中等和复杂任务必须遵循以下规则：
-1. **沙箱隔离先行：** 判定为中等或复杂任务后，默认先获取 `origin` 最新状态，从实际存在的最新 `origin/main` 或 `origin/master` 创建任务分支与独立 `git worktree`（如 `task/YYYY-MM-DD-<task-slug>`），确保宿主工作区绝对纯净，所有方案分析、Spec、Plan 及图表均在 worktree 内生成。
-2. **按复杂度与架构影响选择方案图：** 方案必须附带一张可视化方案图。先检查模块职责与边界、依赖关系、公共接口、数据模型、核心数据流或部署拓扑是否改变，并在 Plan 中记录 `Architecture Impact: Required` 或 `Architecture Impact: None` 及简要理由；不能仅凭修改文件数量或业务逻辑变化判定架构变化。
+### 沙箱隔离先行（所有任务）
+
+完成只读仓库检查与复杂度判定后，简单、中等和复杂任务都必须在方案设计前建立任务分支与独立 `git worktree`：
+
+- 默认先获取 `origin` 最新状态，从实际存在的最新 `origin/main` 或 `origin/master` 创建任务分支（如 `codex/YYYY-MM-DD-<task-slug>`）及独立 worktree。用户指定基线时遵循用户要求；没有对应远端分支时使用合适的本地分支或 `HEAD`，说明选择依据，不因此跳过 worktree。
+- 若当前目录已是本任务的独立 worktree，确认分支与任务匹配后复用，无需嵌套创建。
+- 后续方案产物、文件修改、测试和 QA 均在任务 worktree 内完成；保留宿主工作区已有改动，不清理、覆盖或混入本任务。
+- 简单任务同样执行以上要求；复杂度只影响方案、文档和验证深度，不豁免 worktree。
+
+中等和复杂任务另外遵循以下方案图规则：
+1. **按复杂度与架构影响选择方案图：** 方案必须附带一张可视化方案图。先检查模块职责与边界、依赖关系、公共接口、数据模型、核心数据流或部署拓扑是否改变，并在 Plan 中记录 `Architecture Impact: Required` 或 `Architecture Impact: None` 及简要理由；不能仅凭修改文件数量或业务逻辑变化判定架构变化。
    - **中等任务，有架构变化：** 使用 `/archify`，按下述方式生成 HTML 方案图/对比图。
    - **中等任务，无架构变化：** 直接使用紧凑 Mermaid 展示相关入口、处理流程和预期结果；这是默认方案，不是 fallback，无需生成 HTML 或 candidate JSON。
    - **复杂任务：** 无论是否有架构变化，继续使用 `/archify` 生成 HTML 方案图/对比图。
    - **Archify 生成方式：** 架构/模块演进使用 `archify compare architecture <base.json> <candidate.json> docs/architecture/changes/YYYY-MM-DD-<task-slug>.html` 生成 Before / Delta / After 对比图；业务流/时序/状态机使用 `archify deliver workflow|sequence|lifecycle <candidate.json> docs/architecture/changes/YYYY-MM-DD-<task-slug>.html --quality showcase` 生成交互画布。
    - **Archify 降级（Fallback）：** 需要 Archify 但环境未安装 CLI 或项目未接入 AaC 时，明确标注 `[FALLBACK: mermaid]` 或 `[FALLBACK: ascii]`，使用紧凑 Mermaid/ASCII 回退，并在 Plan 中说明原因。
    - **HTML 持久化：** 仅在使用 Archify 时生成 `docs/architecture/changes/YYYY-MM-DD-<task-slug>.html`（配合可选的 `*.candidate.json`），供用户在 Approval Gate 前查看；涉及架构变化时，与该任务的架构变更语义记录成对归档。
-3. **Plan 保留方案图：** 在 `docs/plans/YYYY-MM-DD-<task-slug>.md` 中嵌入 Mermaid 代码块；使用 Archify 时以相对路径引用 HTML；降级时保留回退图及原因，作为后续实施与 Review 的视觉基线。
-4. **方案图 vs 汇报图：** 方案阶段的图是**“设计预期与变更承诺 (Expected / Delta)”**；任务完成时仍需生成反映实际代码落地的**“交付图 (Actual As-Built)”**。
+2. **Plan 保留方案图：** 在 `docs/plans/YYYY-MM-DD-<task-slug>.md` 中嵌入 Mermaid 代码块；使用 Archify 时以相对路径引用 HTML；降级时保留回退图及原因，作为后续实施与 Review 的视觉基线。
+3. **方案图 vs 汇报图：** 方案阶段的图是**“设计预期与变更承诺 (Expected / Delta)”**；任务完成时仍需生成反映实际代码落地的**“交付图 (Actual As-Built)”**。
 
 ### 简单任务
 
-按“给用户看的批准摘要”说明问题或根因、修改方式和关键测试，然后等待批准。不要制造永久 Spec 文档。
+先按“沙箱隔离先行”建立或复用本任务的独立 worktree，再按“给用户看的批准摘要”说明问题或根因、修改方式和关键测试，然后等待批准；获批后在该 worktree 内修改和验证。不要制造永久 Spec 文档。
 
 ### 中等任务
 
@@ -110,9 +118,9 @@ description: 面向实现功能、修复 Bug、重构和技术改造的端到端
 
 ### 隔离工作区
 
-中等和复杂任务在方案阶段已建立独立任务分支与 `git worktree`；用户批准后，直接在已建立的 worktree 内进入 TDD 编码阶段。若方案被用户否决或任务放弃，直接移除该 worktree，宿主分支零污染。
+所有任务（包括简单任务）在方案阶段已建立或复用独立任务分支与 `git worktree`；用户批准后，直接在该 worktree 内进入 TDD 编码阶段。若方案被用户否决或任务放弃，仅在确认无需要保留的未提交改动或产物后清理 worktree，不强制删除。
 
-仅当仓库没有 Git/对应远端分支、环境不支持 worktree 或用户明确要求时例外，并简要说明原因。
+仅当仓库没有 Git、环境无法使用 worktree 或用户明确要求不使用 worktree 时例外，并简要说明原因；任务简单、修改文件少或缺少远端分支均不构成例外。
 
 ### Spec / Plan 持久化契约
 
