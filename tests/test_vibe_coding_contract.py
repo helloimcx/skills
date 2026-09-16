@@ -99,11 +99,13 @@ class VibeCodingContractTests(unittest.TestCase):
             "100%",
             "分治",
             "审查单元",
+            "20",
         ):
             self.assertIn(required, review)
 
         self.assertIn("覆盖率", skill)
         self.assertIn("分治", skill)
+        self.assertIn("20", skill)
 
         # Linter vs Reviewer boundary
         self.assertIn("Linter", review)
