@@ -389,6 +389,21 @@ class ProjectSetupSkillContractTests(unittest.TestCase):
         self.assertIn(".light.png", policy)
         self.assertIn(".html", policy)
 
+    def test_code_review_governance_and_deterministic_tools_baseline(self) -> None:
+        baseline = (
+            SKILL_DIR / "references" / "production-baseline.md"
+        ).read_text(encoding="utf-8")
+        skill = (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")
+
+        for required in (
+            "代码审查",
+            "确定性",
+            "资产",
+        ):
+            self.assertIn(required, baseline)
+
+        self.assertIn("审查", skill)
+
 
 if __name__ == "__main__":
     unittest.main()

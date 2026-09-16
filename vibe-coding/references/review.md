@@ -7,20 +7,34 @@ Review 目标是找出作者会愿意修复的具体问题，而不是证明 Rev
 - 使用一个独立 Subagent；
 - Reviewer 不参与本轮实现；
 - Review 时只读，不修改代码；
-- 读取最终 Spec / Acceptance Criteria；
+- 读取最终 Spec / Acceptance Criteria 作为业务上下文锚点；
 - 读取 Architecture & Documentation Impact Analysis；
 - 同时检查 Code Diff、Architecture Diff、Documentation Diff，以及必要的上下文、调用方和测试；
 - 继续检查完整改动，不因找到第一个问题而停止；
 - 只报告具体、可验证、可行动的问题；
 - 区分阻塞问题和建议，不把个人风格偏好升级成阻塞问题。
 
-每个 Finding 最好包括：
+### 覆盖率清单与分治契约（Coverage & Divide-and-Conquer）
 
-- 严重程度；
-- 文件和位置；
-- 问题是什么；
-- 为什么会造成真实影响；
-- 建议修复方向。
+- **覆盖率清单（Coverage Checklist）**：Reviewer 必须为每一个待审查的变更文件建立 `(path, status)` 追踪清单，状态标记为 `[REVIEWED]` 或 `[SKIPPED(reason)]`。审查报告必须汇总 `total_files`、`reviewed_files`、`skipped_files`，实现 **100% 显式覆盖闭环**，严禁静默忽略任何文件；任何跳过的文件必须记录具体理由（如纯自动生成代码、锁定依赖更新等）。
+- **关联文件分治打包（Divide-and-Conquer）**：当变更文件数 > 5 或改动行数 > 300 时，禁止将全量 Diff 一次性灌入单个提示词上下文。必须将关联文件打包为独立的**审查单元（Review Unit）**（如接口与实现配对、数据模型与持久化配对、配置与消费入口配对），分批聚焦审查，避免上下文过载导致的浅尝辄止或漏审。
+
+### Linter 与 Reviewer 职责边界（Strict Separation of Concerns）
+
+- **Linter 工具先行**：代码排版、格式化（Formatting）、导入排序（Import Ordering）、简单命名风格等已有 Linter、Formatter 或编译器负责的事项，**严禁作为 Review 的阻塞 Finding**；
+- **审查聚焦深度缺陷**：Reviewer 将注意力聚焦于静态工具无法覆盖的深层问题：业务逻辑缺陷、并发竞态、边界异常路径、资源与 Goroutine/连接生命周期泄漏、安全漏洞与架构边界违背。
+
+### 结构化 Finding 与高信噪比降噪
+
+每个 Finding 采用结构化字段：
+
+- **严重程度（Severity）**：`Critical`（阻塞致命缺陷/安全风险）、`High`（功能逻辑错误/数据一致性破坏）、`Medium`（潜在性能问题/维护隐患）、`Low`（轻微建议/非阻塞优化）；
+- **位置**：文件相对路径与精确行号范围；
+- **分类（Category）**：`bug`、`security`、`performance`、`maintainability`、`test`；
+- **问题与影响**：清晰阐述为何在真实场景下会造成实际损害，提供推理或复现证据；
+- **建议修复方向**：提供可行动的修复指导或建议代码。
+
+默认过滤 `Low` 级别噪音，仅对 `Critical` 和 `High` 设置门禁阻断，保证审查结果具备高信噪比与极高精准度。
 
 ## 简单任务：Adversarial Review
 

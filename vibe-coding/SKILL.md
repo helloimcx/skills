@@ -177,6 +177,8 @@ Spec 和 Plan 必须自包含，并保留上一节规定的必要字段与内嵌
 
 架构与文档同步完成后，召唤 1 个未参与实现的独立 Subagent，按 [references/review.md](references/review.md) 只读检查最终 Spec、Acceptance Criteria、Code Diff、Architecture Diff、Documentation Diff 和必要上下文：
 
+- **覆盖率闭环与分治**：建立 `(path, status)` 覆盖率清单并核对 100% 显式覆盖（跳过必须有明确理由）；大变更加工并按关联文件分治打包为独立审查单元分批处理，杜绝偷懒漏审。
+- **职责解耦与降噪**：已有 Linter 负责的格式排版、命名风格严禁作为阻塞项；审查聚焦深层逻辑缺陷、并发安全与架构契约，仅对 Critical / High 设卡。
 - 简单任务：Adversarial Review；
 - 中等任务：Spec Verifier + Cleaner；
 - 复杂任务：再增加 Architect Review（重点验证实现是否与已批准的 `docs/architecture/changes/YYYY-MM-DD-<task-slug>.html` 方案图/对比图（或已声明的回退图）一致，以及 L1-L3 规范和 `lint:arch` 门禁状态）。
