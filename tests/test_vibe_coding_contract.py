@@ -86,6 +86,29 @@ class VibeCodingContractTests(unittest.TestCase):
         ):
             self.assertIn(spec_type, doc_sync)
 
+    def test_review_contract_has_coverage_checklist_and_divide_and_conquer(self) -> None:
+        skill = (VIBE_CODING_DIR / "SKILL.md").read_text(encoding="utf-8")
+        review = (VIBE_CODING_DIR / "references" / "review.md").read_text(encoding="utf-8")
+
+        for required in (
+            "覆盖率清单",
+            "(path, status)",
+            "total_files",
+            "reviewed_files",
+            "skipped_files",
+            "100%",
+            "分治",
+            "审查单元",
+        ):
+            self.assertIn(required, review)
+
+        self.assertIn("覆盖率", skill)
+        self.assertIn("分治", skill)
+
+        # Linter vs Reviewer boundary
+        self.assertIn("Linter", review)
+        self.assertIn("格式", review)
+
 
 if __name__ == "__main__":
     unittest.main()
