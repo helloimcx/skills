@@ -17,7 +17,7 @@ Review 目标是找出作者会愿意修复的具体问题，而不是证明 Rev
 ### 覆盖率清单与分治契约（Coverage & Divide-and-Conquer）
 
 - **覆盖率清单（Coverage Checklist）**：Reviewer 必须为每一个待审查的变更文件建立 `(path, status)` 追踪清单，状态标记为 `[REVIEWED]` 或 `[SKIPPED(reason)]`。审查报告必须汇总 `total_files`、`reviewed_files`、`skipped_files`，实现 **100% 显式覆盖闭环**，严禁静默忽略任何文件；任何跳过的文件必须记录具体理由（如纯自动生成代码、锁定依赖更新等）。
-- **关联文件分治打包（Divide-and-Conquer）**：当变更文件数 > 5 或改动行数 > 300 时，禁止将全量 Diff 一次性灌入单个提示词上下文。必须将关联文件打包为独立的**审查单元（Review Unit）**（如接口与实现配对、数据模型与持久化配对、配置与消费入口配对），分批聚焦审查，避免上下文过载导致的浅尝辄止或漏审。
+- **超大变更按需分治（Divide-and-Conquer）**：常规任务（<= 10–15 个文件）默认进行全貌统一审查，以保证跨文件调用链与系统上下文的完整性。仅当变更规模极大（如跨越多个相对独立的子系统、文件数超过 15–20 个或变更数千行）导致单次审查注意力易被稀释时，才按模块或子系统边界打包为相对独立的**审查单元（Review Unit）**分批审查，不机械拆碎普通协同改动。
 
 ### Linter 与 Reviewer 职责边界（Strict Separation of Concerns）
 
