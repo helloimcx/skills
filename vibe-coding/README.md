@@ -12,7 +12,7 @@
 - 编码前唯一 Approval Gate；
 - 所有任务（包括简单任务）在方案设计前创建或复用独立 Git worktree，开发与验证均在其中完成；新建任务默认从最新 `origin/main` 或 `origin/master` 创建任务分支；
 - 中等/复杂任务：Spec 和 Plan 按 `YYYY-MM-DD-<task-slug>.md` 持久化到 `docs/`；
-- TDD：RED → GREEN → REFACTOR，完成后完整自动化测试套件必须全部通过；
+- TDD：RED → GREEN → REFACTOR；
 - Review 前执行 Architecture & Documentation Impact Analysis，并同步受影响文档；
 - 新增较大独立模块时创建专属模块架构文档，并按需添加示意图；
 - 独立 Subagent Review；
