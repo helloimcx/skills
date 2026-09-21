@@ -100,7 +100,7 @@ Reviewer 的心态：**尝试证明这段代码在真实场景下会失败。**
 
 按照 [documentation-sync.md](documentation-sync.md) 验证文档影响结论。若代码改变模块边界、依赖关系、公共接口、核心流程、数据流、API、配置、部署拓扑或开发/构建/测试流程，而相关架构规范（L1-L3）、变更记录、Spec、Plan 或仓库级规则未同步更新，将其列为阻塞 Finding，Review 不得通过。
 
-若任务涉及架构变更（`Architecture Impact: Required`），检查 `docs/architecture/changes/YYYY-MM-DD-<task-slug>.md` 语义记录是否与方案阶段的 HTML 对比图成对归档，且 `lint:arch` 校验通过；未同步时 Review 不得通过。
+若任务涉及架构变更（`Architecture Impact: Required`），检查架构规范是否更新且 `lint:arch` 校验通过；若为复杂任务，进一步检查 `docs/architecture/changes/YYYY-MM-DD-<task-slug>.md` 语义记录是否与方案阶段的 HTML 对比图成对归档（已声明降级时检查回退图与原因引用）；未同步时 Review 不得通过。
 
 新增职责与边界清晰的较大独立模块时，检查是否存在对应的 `docs/architecture/modules/<module-name>.md`、模块索引入口及必要架构图；缺失时 Review 不得通过。
 
@@ -116,4 +116,4 @@ Reviewer 的心态：**尝试证明这段代码在真实场景下会失败。**
 
 有效 Finding 修复后重新运行相关测试；如果改动影响 Review 结论，应再次调用独立 Reviewer。
 
-方案图格式遵循 [SKILL.md](../SKILL.md) 的分级规则：中等且无架构变化的任务仅需在 Plan 中嵌入简要 Mermaid，不要求 HTML 或架构变更语义记录；复杂任务继续使用 `/archify`。已声明 Archify 降级时，上述 HTML 一致性与成对归档检查改为检查 Plan 中的回退图、降级原因及语义记录引用。
+方案图格式遵循 [SKILL.md](../SKILL.md) 的分级规则：复杂任务且有架构变化时使用 `/archify` 生成 HTML 对比图并与变更语义记录成对归档（声明降级时引用回退图与原因）；复杂任务无架构变化及中等任务在 Plan 中嵌入简要 Mermaid。

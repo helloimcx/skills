@@ -61,9 +61,9 @@ Reviewer 必须同时检查：
 
 若代码改变模块边界、依赖关系、公共接口、核心流程、数据流、API、配置、部署拓扑或开发/构建/测试流程，而相关文档没有同步更新，Review 不得通过。新增较大独立模块却没有对应模块文档，也视为阻塞问题。
 
-若任务涉及架构变更（`Architecture Impact: Required`），Reviewer 必须验证最终代码实现是否与已批准的 `docs/architecture/changes/YYYY-MM-DD-<task-slug>.html` 方案对比图一致，且 `lint:arch` 门禁结果为 0 错误 0 警告。
+若任务涉及架构变更（`Architecture Impact: Required`），Reviewer 必须验证最终代码实现是否与已批准的方案图一致（复杂任务验证 `docs/architecture/changes/YYYY-MM-DD-<task-slug>.html` 方案对比图，中等任务验证 Plan 中的 Mermaid 方案图），且 `lint:arch` 门禁结果为 0 错误 0 警告。
 
 文档影响分析与必要的文档更新属于 Definition of Done。
 
 
-方案图格式遵循 [SKILL.md](../SKILL.md) 的分级规则：中等且无架构变化的任务仅需在 Plan 中嵌入简要 Mermaid，不要求 HTML 或架构变更语义记录；复杂任务继续使用 `/archify`。已声明 Archify 降级时，上述 HTML 一致性与成对归档检查改为检查 Plan 中的回退图、降级原因及语义记录引用。
+方案图格式遵循 [SKILL.md](../SKILL.md) 的分级规则：复杂任务且有架构变化时使用 `/archify` 生成 HTML 对比图并与变更语义记录成对归档（声明降级时引用回退图与原因）；复杂任务无架构变化及中等任务在 Plan 中嵌入简要 Mermaid。

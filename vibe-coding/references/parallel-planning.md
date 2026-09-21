@@ -100,7 +100,7 @@
 
 最终方案保持结论先行、简洁、清晰、易懂。附一小段“关键取舍”，只解释真正影响设计的决策。
 
-同时，在独立 worktree 中调用 `archify compare` 生成 `docs/architecture/changes/YYYY-MM-DD-<task-slug>.html` 架构对比图（或调用 `archify deliver` 生成对应的 workflow/sequence/lifecycle 交互画布），直观呈现改动前后的状态差异；Plan 文档中直接以相对链接引用该 HTML 画布。若环境未安装 Archify CLI 或属于未接入 AaC 的项目，使用声明式 fallback（紧凑 Mermaid/ASCII 示意图）。
+同时，若任务有架构变化（`Architecture Impact: Required`），在独立 worktree 中调用 `archify compare` 生成 `docs/architecture/changes/YYYY-MM-DD-<task-slug>.html` 架构对比图（或调用 `archify deliver` 生成对应的 workflow/sequence/lifecycle 交互画布），直观呈现改动前后的状态差异，并在 Plan 中以相对链接引用（未安装 Archify CLI 或项目未接入 AaC 时使用声明式 fallback，嵌入紧凑 Mermaid/ASCII 示意图）。若无架构变化（`Architecture Impact: None`），在 Plan 中直接嵌入紧凑 Mermaid 方案图。
 
 然后进入唯一一次用户 Approval Gate。
 
