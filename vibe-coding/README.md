@@ -7,7 +7,7 @@
 - Inspect before asking：先读代码再 Grill；
 - 简单 / 中等 / 复杂三级流程；
 - 批准前的聊天摘要先用通俗语言讲清“解决什么、怎么做、怎么验收”，完整技术方案与用户摘要分层；
-- 中等任务有架构变化时使用 `/archify`，否则使用简要 Mermaid；复杂任务继续使用 `/archify`；
+- 只有当复杂任务且有架构变化时才使用 `/archify`，其余情况（复杂任务无架构变化、中等任务、简单任务）使用简要 Mermaid/ASCII；
 - 复杂任务：3 个相同角色的独立 Subagent 并行规划，主 Agent 统一评判和综合；
 - 编码前唯一 Approval Gate；
 - 所有任务（包括简单任务）在方案设计前创建或复用独立 Git worktree，开发与验证均在其中完成；新建任务默认从最新 `origin/main` 或 `origin/master` 创建任务分支；

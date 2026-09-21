@@ -111,6 +111,29 @@ class VibeCodingContractTests(unittest.TestCase):
         self.assertIn("Linter", review)
         self.assertIn("格式", review)
 
+    def test_archify_only_used_for_complex_tasks_with_architecture_changes(self) -> None:
+        skill = (VIBE_CODING_DIR / "SKILL.md").read_text(encoding="utf-8")
+        readme = (VIBE_CODING_DIR / "README.md").read_text(encoding="utf-8")
+        planning = (
+            VIBE_CODING_DIR / "references" / "parallel-planning.md"
+        ).read_text(encoding="utf-8")
+        doc_sync = (
+            VIBE_CODING_DIR / "references" / "documentation-sync.md"
+        ).read_text(encoding="utf-8")
+        review = (VIBE_CODING_DIR / "references" / "review.md").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("只有当复杂任务且有架构变化时才使用 `/archify`", skill)
+        self.assertIn("中等任务（无论是否有架构变化）：** 直接使用紧凑 Mermaid", skill)
+        self.assertIn("复杂任务且无架构变化（`Architecture Impact: None`）：** 直接在 Plan 中嵌入紧凑 Mermaid", skill)
+        self.assertIn("复杂任务且有架构变化（`Architecture Impact: Required`）：** 才使用 `/archify`", skill)
+        self.assertIn("只有当复杂任务且有架构变化时才使用 `/archify`", readme)
+        self.assertIn("若无架构变化（`Architecture Impact: None`），直接在 Plan 中嵌入紧凑 Mermaid 方案图，无需调用 Archify", planning)
+        self.assertIn("只有复杂任务且有架构变化时才使用 `/archify`", doc_sync)
+        self.assertIn("只有复杂任务且有架构变化时才使用 `/archify`", review)
+
 
 if __name__ == "__main__":
     unittest.main()
+
