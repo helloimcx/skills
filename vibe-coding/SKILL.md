@@ -19,7 +19,7 @@ description: 面向实现功能、修复 Bug、重构和技术改造的端到端
 6. **复杂任务先并行规划，再集中裁决。** 3 个相同角色的独立 Subagent 分别求解，主 Agent 形成唯一最终方案。
 7. **TDD 是默认实现方式。** 遵循 `RED → GREEN → REFACTOR`，保持当前行为切片的相关测试通过。
 8. **Review 和 QA 是质量门禁。** 验证深度按任务风险和项目能力选择，发现有效问题必须修复并重测。
-9. **文档必须反映当前代码。** 只有当复杂任务且有架构变化时才使用 `/archify`（HTML 产物存储于 `docs/architecture/changes/`）；其余任务（复杂任务无架构变化、中等任务、简单任务）均使用简要 Mermaid/ASCII；实现完成后、Review 前必须通过 `lint:arch` 门禁并同步更新正式架构规范。
+9. **文档必须反映当前代码。** 复杂任务且有架构变化时使用 `/archify`（HTML 产物存储于 `docs/architecture/changes/`），其余情况使用简要 Mermaid/ASCII；实现完成后、Review 前必须通过 `lint:arch` 门禁并同步更新正式架构规范。
 10. **优先最简单的正确方案。** 尊重现有架构，避免无需求支撑的抽象、框架和顺手重构。
 11. **Done 需要证据。** 相关验收标准、自动化测试和适用的真实主路径均有验证结论。
 
@@ -77,12 +77,9 @@ description: 面向实现功能、修复 Bug、重构和技术改造的端到端
 - 简单任务同样执行以上要求；复杂度只影响方案、文档和验证深度，不豁免 worktree。
 
 中等和复杂任务另外遵循以下方案图规则：
-1. **按复杂度与架构影响选择方案图：** 方案必须附带一张可视化方案图。先检查模块职责与边界、依赖关系、公共接口、数据模型、核心数据流或部署拓扑是否改变，并在 Plan 中记录 `Architecture Impact: Required` 或 `Architecture Impact: None` 及简要理由；不能仅凭修改文件数量或业务逻辑变化判定架构变化。
-   - **中等任务（无论是否有架构变化）：** 直接使用紧凑 Mermaid 展示相关入口、处理流程和预期结果；这是默认方案，无需调用 `/archify`，无需生成 HTML 或 candidate JSON。
-   - **复杂任务且无架构变化（`Architecture Impact: None`）：** 直接在 Plan 中嵌入紧凑 Mermaid，无需调用 `/archify`，无需生成 HTML 或 candidate JSON。
-   - **复杂任务且有架构变化（`Architecture Impact: Required`）：** 才使用 `/archify` 生成 HTML 方案图/对比图。架构/模块演进使用 `archify compare architecture <base.json> <candidate.json> docs/architecture/changes/YYYY-MM-DD-<task-slug>.html` 生成 Before / Delta / After 对比图；业务流/时序/状态机使用 `archify deliver workflow|sequence|lifecycle <candidate.json> docs/architecture/changes/YYYY-MM-DD-<task-slug>.html --quality showcase` 生成交互画布。
-   - **Archify 降级（Fallback）：** 当复杂任务且有架构变化需要 Archify，但环境未安装 CLI 或项目未接入 AaC 时，明确标注 `[FALLBACK: mermaid]` 或 `[FALLBACK: ascii]`，使用紧凑 Mermaid/ASCII 回退，并在 Plan 中说明原因。
-   - **HTML 持久化：** 仅在复杂任务且有架构变化（使用 Archify）时生成 `docs/architecture/changes/YYYY-MM-DD-<task-slug>.html`（配合可选的 `*.candidate.json`），供用户在 Approval Gate 前查看，并与该任务的架构变更语义记录成对归档。
+1. **按复杂度与架构影响选择方案图：** 方案必须附带一张可视化方案图。先检查模块职责与边界、依赖关系、公共接口、数据模型、核心数据流或部署拓扑是否改变，并在 Plan 中记录 `Architecture Impact: Required` 或 `Architecture Impact: None` 及简要理由。
+   - **复杂任务且有架构变化（`Architecture Impact: Required`）：** 使用 `/archify` 生成 HTML 方案图/对比图。架构/模块演进使用 `archify compare architecture <base.json> <candidate.json> docs/architecture/changes/YYYY-MM-DD-<task-slug>.html` 生成 Before / Delta / After 对比图；业务流/时序/状态机使用 `archify deliver workflow|sequence|lifecycle <candidate.json> docs/architecture/changes/YYYY-MM-DD-<task-slug>.html --quality showcase` 生成交互画布；未安装 CLI 或项目未接入 AaC 时标注 `[FALLBACK: mermaid]` 或 `[FALLBACK: ascii]` 回退并在 Plan 中说明原因。生成的 HTML 方案图与该任务的架构变更语义记录成对归档。
+   - **其他情况（中等任务、无架构变化的复杂任务）：** 在 Plan 中嵌入紧凑 Mermaid 展示相关入口、处理流程和预期结果。
 2. **Plan 保留方案图：** 在 `docs/plans/YYYY-MM-DD-<task-slug>.md` 中嵌入 Mermaid 代码块；复杂任务且有架构变化使用 Archify 时以相对路径引用 HTML；降级时保留回退图及原因，作为后续实施与 Review 的视觉基线。
 3. **方案图 vs 汇报图：** 方案阶段的图是**“设计预期与变更承诺 (Expected / Delta)”**；任务完成时仍需生成反映实际代码落地的**“交付图 (Actual As-Built)”**。
 
@@ -92,7 +89,7 @@ description: 面向实现功能、修复 Bug、重构和技术改造的端到端
 
 ### 中等任务
 
-提交可执行的 **Spec + Plan**，并按“给用户看的批准摘要”把其中真正需要用户判断的内容翻译成通俗摘要；Plan 中附简要 Mermaid 方案图（无需调用 `/archify`），然后等待批准：
+提交可执行的 **Spec + Plan**，并按“给用户看的批准摘要”把其中真正需要用户判断的内容翻译成通俗摘要；Plan 中附简要 Mermaid 方案图，然后等待批准：
 
 - Spec：Goal、Scope、Non-goals、Behavior / Interface、Constraints / Compatibility、Acceptance Criteria。
 - Plan：有顺序的修改步骤、涉及模块或文件、数据 / API / 配置变化、测试策略、验证顺序、架构影响结论、内嵌 Mermaid 方案图。
@@ -220,4 +217,4 @@ QA 失败时执行：
 
 最终汇报保持简洁：说明实现内容、关键设计决定、测试与 QA 结果，以及仍存在的外部限制或风险。不要重复整份 Spec 或输出冗长工作日志。
 
-任务完成后，最终汇报必须附一张基于最终代码生成的真实**交付架构/流程图**：只有复杂任务且有架构变化时才使用 `/archify`（展示 HTML 画布或图片链接，不可用时按方案阶段规则声明降级）；其余情况（复杂任务无架构变化、中等任务、简单任务）统一使用简要 Mermaid/ASCII。若实施中发现新的架构变化，先同步 Plan 的影响结论与方案图。交付图聚焦展示改动入口、实际落地改动点及其关系或影响，证明真实落地成果与最初方案承诺的一致性。
+任务完成后，最终汇报必须附一张基于最终代码生成的真实**交付架构/流程图**：复杂任务且有架构变化时使用 `/archify`（展示 HTML 画布或图片链接，不可用时声明降级），其余情况使用简要 Mermaid/ASCII。若实施中发现新的架构变化，先同步 Plan 的影响结论与方案图。交付图聚焦展示改动入口、实际落地改动点及其关系或影响，证明真实落地成果与最初方案承诺的一致性。
