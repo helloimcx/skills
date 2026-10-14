@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>__页面名__ · __项目名__</title>
+<!-- 共享样式：与实现主题视觉一致；引用带 ?v= 防缓存
+<link rel="stylesheet" href="assets/app.css?v=__YYYYMMDD__">
+-->
+<style>
+  /* 页面私有样式；跨页复用的进 assets/ */
+  body { font-family: system-ui, sans-serif; margin: 24px; color: #16232e; }
+  h1 { font-size: 20px; }
+</style>
+</head>
+<body>
+<!-- proto:
+需求: __对应 issue/spec 或一句话需求__
+入口路径: __实现的路由/入口，如 /report 或 view=run__
+数据契约: __新增后端接口在此定义；纯展示写 无__
+-->
+
+<h1>__页面名__（原型 · 假数据）</h1>
+
+<!-- 布局区块：按页面结构拆 section，每个可交互元素都要真的可点 -->
+
+<script>
+  // 假数据内联：不引外部数据源、不发真实请求
+  var FAKE = [
+    { "name": "示例条目 A", "value": 42 },
+    { "name": "示例条目 B", "value": 7 }
+  ];
+  // 交互演示：状态切换 / 弹窗 / 下钻等，用原生 JS 实现到可点击
+  document.body.insertAdjacentHTML("beforeend",
+    "<ul>" + FAKE.map(function (it) { return "<li>" + it.name + "：" + it.value + "</li>"; }).join("") + "</ul>");
+</script>
+</body>
+</html>

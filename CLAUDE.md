@@ -30,6 +30,11 @@ Skills are installed by copying folders directly to `~/.claude/skills/`.
 - **功能**: 面向高质量软件开发的端到端 Vibe Coding 工作流（需求澄清/复杂度分级/并行规划/TDD/Review/真实QA闭环）
 - **文件**: `vibe-coding/SKILL.md`
 
+### prototype-first
+- **目录**: `prototype-first/`
+- **功能**: 原型先行 UI 开发流程（在项目 design/ 产出高保真可点击原型，经确认后才允许动实现代码）
+- **文件**: `prototype-first/SKILL.md`
+
 ### code-duplication-scanner
 - **目录**: `code-duplication-scanner/`
 - **功能**: 检测 Git 修改代码与现有代码库之间的重复代码
