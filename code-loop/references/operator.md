@@ -24,18 +24,18 @@ Operator 是 code-loop 的 L1 机器运维协调 Agent：
      - 必要时调用 `github_comment_issue`（或兼容别名 `gitea_comment_issue`）追加现场诊断证据。
    - 若平台无法访问或需人工干预，执行 `escalate_human`。
 
-## 动词支持状态
+## 动词支持状态与目标参数格式
 
-| 动词 | 类别 | 状态 | 目标参数与说明 |
-|---|---|---|---|
-| `collect_refresh` | Mitigation | 已接线 | 触发看板后台刷新数据采集 |
-| `command_resend` | Mitigation | 已接线 | `--target <command_id>` 重新下发指定命令 |
-| `wal_checkpoint` | Mitigation | 已接线 | 针对机器主库执行 WAL TRUNCATE |
-| `github_create_issue` / `gitea_create_issue` | Escalation | 已接线 | `--target <org/repo>` `--detail <json_payload>` 创建跟踪 Issue |
-| `github_comment_issue` / `gitea_comment_issue` | Escalation | 已接线 | `--target <issue_number>` `--detail <comment_body>` 追加调查记录 |
-| `escalate_human` | Escalation | 已接线 | 标记不可恢复故障，等待人工介入 |
-| `no_op` | Local | 本地执行 | 状态正常，无需采取干预措施 |
-| `sweep_expired` | Local | 本地执行 | 清理超期未关闭的死锁与僵尸记录 |
+| 动词 | 类别 | 状态 | 目标参数 `--target` 规范格式 | 说明 |
+|---|---|---|---|---|
+| `collect_refresh` | Mitigation | 已接线 | 空或省略 | 触发看板后台刷新数据采集 |
+| `command_resend` | Mitigation | 已接线 | `<review_round\|repair_round>:<number>:<org__repo>` | 重新下发指定未决轮次命令 |
+| `wal_checkpoint` | Mitigation | 已接线 | `<db path>`（省略则默认仪表主库） | 针对指定库执行 SQLite WAL checkpoint (TRUNCATE) |
+| `github_create_issue` / `gitea_create_issue` | Escalation | 已接线 | `<org__repo>:<title>`（或 `<org/repo>:<title>`） | `--detail <body_text>` 创建跟踪 Issue |
+| `github_comment_issue` / `gitea_comment_issue` | Escalation | 已接线 | `<org__repo>:<issue#>`（或 `<org/repo>:<issue#>`） | `--detail <comment_body>` 追加调查记录 |
+| `escalate_human` | Escalation | 已接线 | `<org__repo>:<title>`（或 `<org/repo>:<title>`） | `--detail <body_text>` 自动加 `[❓needs-human]` 标记人工介入 |
+| `no_op` | Local | 本地执行 | 空或省略 | 状态正常，无需采取干预措施 |
+| `sweep_expired` | Local | 本地执行 | 空或省略 | 清理超期未关闭的死锁与僵尸记录 |
 
 ## 命令行交互契约
 

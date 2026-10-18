@@ -1,9 +1,21 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 # Stdlib operator collision guard
 if __name__ == 'operator':
-    import _operator as _std_op
-    for _k, _v in _std_op.__dict__.items():
-        if not _k.startswith('__'):
-            globals()[_k] = _v
+    import importlib
+    import sys
+
+    _scripts_dirs = [p for p in sys.path if p.replace('\\', '/').rstrip('/').endswith('/scripts')]
+    for _d in _scripts_dirs:
+        sys.path.remove(_d)
+    try:
+        del sys.modules['operator']
+        _real_op = importlib.import_module('operator')
+        sys.modules['operator'] = _real_op
+        globals().update(_real_op.__dict__)
+    finally:
+        for _d in _scripts_dirs:
+            sys.path.append(_d)
 else:
     """Session-side CLI for operator rounds (the stable entry the prompt names).
 

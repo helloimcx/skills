@@ -154,6 +154,10 @@ def _pin_interpreter(cfg):
 
 def _load_platform(cfg, config_dir):
     platform = cfg.get('platform', {})
+    if not isinstance(platform, dict):
+        raise ValueError('PLATFORM_REQUIRED')
+    if not platform.get('url') and platform.get('repo'):
+        platform['url'] = 'https://api.github.com'
     if not platform.get('url') or not platform.get('repo'):
         raise ValueError('PLATFORM_REQUIRED')
     token_env = platform.get('token_env', 'GITHUB_TOKEN')

@@ -6,6 +6,7 @@ from pathlib import Path
 import sys
 import threading
 import unittest
+from unittest import mock
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
@@ -391,6 +392,58 @@ class GitHubAdapterTests(unittest.TestCase):
         self.routes[('GET', '/issues', 1)] = [{'number': 1}]
         with self.assertRaises(GitHubError):
             self.client.list_issues()
+
+    def test_snapshot_pull_request_simple_merged_at(self):
+        # A realistic GitHub Pull Request Simple item from GET /pulls has merged_at, but no merged field
+        pr_simple = dict(issue(3), state='closed', updated_at='2026-09-01T00:00:00Z',
+                         head={'sha': 'abc', 'ref': 'f'},
+                         base={'sha': 'base', 'ref': 'main'},
+                         merged_at='2026-09-01T00:00:00Z')
+        self.routes[('GET', '/pulls', 1)] = [pr_simple]
+        known = {('pr', 3): ('closed', '2026-09-01T00:00:00Z')}
+        snap = self.client.snapshot(known)
+        self.assertTrue(snap['prs'][0]['merged'])
+
+    def test_snapshot_pull_request_simple_unmerged(self):
+        pr_simple = dict(issue(4), state='closed', updated_at='2026-09-01T00:00:00Z',
+                         head={'sha': 'def', 'ref': 'f'},
+                         base={'sha': 'base', 'ref': 'main'},
+                         merged_at=None)
+        self.routes[('GET', '/pulls', 1)] = [pr_simple]
+        known = {('pr', 4): ('closed', '2026-09-01T00:00:00Z')}
+        snap = self.client.snapshot(known)
+        self.assertFalse(snap['prs'][0]['merged'])
+
+    def test_check_runs_and_actions_statuses(self):
+        pr = issue(5, head={'sha': 'sha123', 'ref': 'feature/y'},
+                   base={'sha': 'base', 'ref': 'main'}, merged=False)
+        self.routes[('GET', '/pulls', 1)] = [pr]
+        self.routes[('GET', '/pulls/5', 0)] = pr
+        self.routes[('GET', '/commits/sha123/statuses', 1)] = [
+            {'id': 1, 'context': 'status-ci', 'state': 'success'}]
+        self.routes[('GET', '/commits/sha123/check-runs', 0)] = {
+            'total_count': 1,
+            'check_runs': [{'id': 20, 'name': 'actions-build', 'status': 'completed', 'conclusion': 'success'}]
+        }
+        checks = self.client.snapshot()['prs'][0]['checks']
+        checks_map = {c['context']: c['status'] for c in checks}
+        self.assertEqual('success', checks_map.get('status-ci'))
+        self.assertEqual('success', checks_map.get('actions-build'))
+
+    def test_gh_auth_token_fallback(self):
+        saved_gh = os.environ.pop('GITHUB_TOKEN', None)
+        saved_gt = os.environ.pop('GITEA_TOKEN', None)
+        try:
+            with mock.patch('shutil.which', return_value='/usr/bin/gh'):
+                with mock.patch('subprocess.run') as mock_run:
+                    mock_run.return_value = mock.Mock(returncode=0, stdout='mocked-gh-token\n')
+                    client = GitHub({'url': 'https://api.github.com', 'repo': 'a/b'})
+                    self.assertEqual('mocked-gh-token', client.token)
+        finally:
+            if saved_gh is not None:
+                os.environ['GITHUB_TOKEN'] = saved_gh
+            if saved_gt is not None:
+                os.environ['GITEA_TOKEN'] = saved_gt
 
 
 if __name__ == '__main__':

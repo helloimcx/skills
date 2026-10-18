@@ -71,6 +71,7 @@
 2. **考题变更流程**：修改验证命令必须作为针对 base 分支的独立 PR 合并后，下一轮方生效。
 3. **考题篡改护栏（`exam.touched_by_pr`）**：当 PR diff 精确触碰 `.code-loop/verify.json` 时，发布阶段会自动追加强制安全警示行并打上审计事件。
 4. **Fail-Closed 故障回退**：若文件损坏或读取格式非法，立即拒绝 claim（报 `EXAM_INVALID` / `EXAM_UNAVAILABLE`），绝不静默放行；仅在文件缺失（404）时平滑回退到机器本地旧配置。
+5. **Checks 与 Status 双引擎覆盖**：`required_checks` 名单同时覆盖 GitHub Actions Check Runs（以 Job/Workflow 名匹配，要求 `status == 'completed'` 且 `conclusion == 'success'`）与 Commit Status API（以 context 名匹配，要求 `state == 'success'`）。
 
 ---
 

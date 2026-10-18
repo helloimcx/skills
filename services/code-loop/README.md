@@ -1,6 +1,6 @@
 # code-loop service
 
-code-loop 的机器本地确定性运行时（服务单元）：Control Plane 协调器（`cp/`）、监控面板（`dash/`，平台事实只读 + 三个白名单本机动作：采集刷新 / 决策回复 / 下发 reviewer 轮指令）、事件触发层（`trigger.py`）、**合并服务**（`cp_server.py serve`：单进程双端口——8722 协调面 + `127.0.0.1:8712` 面板 UI）、**指令通道**（`cp/ws.py` 最小 RFC6455 + `cp/server.py` 的派发器 + `agent.py` 常驻执行机 agent）与其全量测试。对应薄 skill 见 `skills/code-loop/`（规则文档 + 五个路径稳定的委托 CLI：control_plane/dashboard/trigger/cp_server/worker_agent）；拆分背景与契约见 `docs/specs/2026-09-10-code-loop-service-split.md`，远程接入背景与契约见 `docs/specs/2026-09-11-cp-remote-access.md`。
+code-loop 的机器本地确定性运行时（服务单元）：Control Plane 协调器（`cp/`）、监控面板（`dash/`，平台事实只读 + 三个白名单本机动作：采集刷新 / 决策回复 / 下发 reviewer 轮指令）、事件触发层（`trigger.py`）、**合并服务**（`cp_server.py serve`：单进程双端口——8722 协调面 + `127.0.0.1:8712` 面板 UI）、**指令通道**（`cp/ws.py` 最小 RFC6455 + `cp/server.py` 的派发器 + `agent.py` 常驻执行机 agent）与其全量测试。对应薄 skill 见 `code-loop/`（规则文档 + 路径稳定的委托 CLI：control_plane/dashboard/trigger/cp_server/worker_agent/operator/check_ledger）；集成背景与契约见 `docs/specs/2026-10-18-code-loop-service-and-skill-integration.md`。
 
 ## 边界
 

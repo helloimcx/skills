@@ -11,7 +11,9 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import ssl
+import subprocess
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode, urlsplit
 from urllib.request import HTTPSHandler, HTTPRedirectHandler, Request, build_opener
@@ -82,6 +84,14 @@ class GitHub:
             gitea_file = Path.home() / '.code-loop' / 'credentials' / gitea_env
             if not self.token and gitea_file.is_file():
                 self.token = gitea_file.read_text(encoding='utf-8').strip()
+        # Fallback to gh auth token only for GITHUB_TOKEN when gh CLI is available
+        if not self.token and token_env == 'GITHUB_TOKEN' and config.get('gh_auth', True) and shutil.which('gh'):
+            try:
+                proc = subprocess.run(['gh', 'auth', 'token'], capture_output=True, text=True, timeout=5)
+                if proc.returncode == 0 and proc.stdout.strip():
+                    self.token = proc.stdout.strip()
+            except Exception:
+                pass
 
         if not self.token and not local:
             raise GitHubError('Platform token missing: set %s env or write %s' % (token_env, token_file))
@@ -241,6 +251,8 @@ class GitHub:
 
     def _pr(self, item):
         self._issue(item)
+        if 'merged' not in item and 'merged_at' in item:
+            item['merged'] = bool(item['merged_at'])
         self._object(item, ('head', 'base', 'merged'))
         if type(item['merged']) is not bool:
             raise GitHubError('Malformed PR merged flag')
@@ -309,12 +321,32 @@ class GitHub:
                 self._object(review, ('state', 'body'))
                 if review.get('body') is None:
                     review['body'] = ''
-            # Statuses are platform facts and always observed:
-            item['checks'] = self._pages('/commits/' + quote(item['head']['sha'], safe='') + '/statuses')
-            for check in item['checks']:
-                if 'status' not in check and 'state' in check:
-                    check['status'] = check['state']
-                self._object(check, ('context', 'status'))
+            # Statuses & Check Runs are platform facts and always observed:
+            checks = []
+            try:
+                statuses = self._pages('/commits/' + quote(item['head']['sha'], safe='') + '/statuses')
+                for check in statuses:
+                    if 'status' not in check and 'state' in check:
+                        check['status'] = check['state']
+                    self._object(check, ('context', 'status'))
+                    checks.append(check)
+            except GitHubError:
+                pass
+            try:
+                cr_resp = self._request('/commits/' + quote(item['head']['sha'], safe='') + '/check-runs')
+                if isinstance(cr_resp, dict) and 'check_runs' in cr_resp:
+                    for run in cr_resp.get('check_runs', []):
+                        status_str = 'pending'
+                        if run.get('status') == 'completed':
+                            status_str = 'success' if run.get('conclusion') == 'success' else 'failure'
+                        checks.append({
+                            'id': run.get('id', 0),
+                            'context': run.get('name', ''),
+                            'status': status_str,
+                        })
+            except Exception:
+                pass
+            item['checks'] = checks
             prs.append(item)
         return {'issues': issues, 'prs': prs, 'base_sha': commit_id}
 

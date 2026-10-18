@@ -136,7 +136,7 @@ Skill 的 `scripts/` 目录提供路径稳定的委托 CLI 入口（自动路由
 ## 4. 平台集成与配置（GitHub）
 
 ### 1. 凭据配置
-服务优先读取环境变量 `GITHUB_TOKEN`，或机器本地凭据文件 `~/.code-loop/credentials/GITHUB_TOKEN`。同时支持本地 `gh` CLI 自动继承身份。
+服务优先读取环境变量 `GITHUB_TOKEN`，或机器本地凭据文件 `~/.code-loop/credentials/GITHUB_TOKEN`，并支持本地 `gh` CLI 自动继承身份（`gh auth token`）。
 
 ### 2. 目标仓库考题配置（`.code-loop/verify.json`）
 在受控项目根目录添加门禁定义：
@@ -154,9 +154,9 @@ Skill 的 `scripts/` 目录提供路径稳定的委托 CLI 入口（自动路由
 ### 3. 项目配置文件（`~/.code-loop/projects/<org__repo>/control-plane.json`）
 ```json
 {
-  "project_key": "myorg__myrepo",
   "base": "main",
   "platform": {
+    "url": "https://api.github.com",
     "repo": "myorg/myrepo"
   },
   "worktree_root": "/path/to/worktrees",
