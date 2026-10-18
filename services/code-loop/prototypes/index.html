@@ -1,0 +1,980 @@
+<!DOCTYPE html>
+<html lang="zh">
+<!--
+  原型（演进基座）：index.html —— 完整 dashboard 可交互副本 · 2026-09-30
+  （v1 干预台账单视图 → v2 完整可点击整页 → v2.1 运行详情复用既有组件 → v3 定名 index.html 作原型体系基座；
+   本文件由 operator-ledger.html 更名而来）
+
+  管理约定（见 prototypes/README.md「演进基座」）：此后所有 dashboard UI 原型修改都基于本完整页面进行——
+  新视图/交互改动直接加在本页上演示（含跨视图联动、深链走查），确认后才动 frontend/；
+  存量单视图迷你原型保留为各自已实现视图的设计事实源，不再新增迷你原型。
+  本页当前演示的增量：operator（CP 协调监控 agent）全套——干预台账视图 + 手动触发对话框 +
+  运行详情 operator 变体（复用既有 view=run 组件）+ 告警条/循环页触发入口。
+
+  2026-10-09 增量（已确认并落地 frontend/）：看板去掉「已合并」列（7 列 → 6 列制，含折叠交互一并移除）；
+  页面可视宽度 main 1400→1760px；仪表面板美化（列=stage 色微染仪表通道/轨道 4px/卡片内距字级/
+  chip 脆化/读数条数字加粗）。本页 <style> 的覆盖规则已折入 ../frontend/app.css，保留作设计事实源。
+
+  2026-10-10 增量（待确认，issue #314/#315 响应性修复）：采集异步单飞——
+  ①「立即采集」点击立即返回（采集转后台），按钮三态：立即采集 → 已提交·采集中… → 完成，页面交互全程不被阻塞；
+  ② 采集进行中的重复触发（再点/切回页面）并入同一轮（单飞 skipped），不叠加不排队；
+  ③ 切换视图即卸载非活动视图 DOM（全页常驻约 1 万节点 → 仅活动视图），切回自动重新加载（列表滚动位置复位）；
+  ④ 状态条「即时采集中…」提示语义不变。
+  数据契约：POST /api/collect 立即返回 started/skipped；新增 GET /api/collect/status 供完成轮询。
+
+  需求：code-loop 第四角色 operator（CP 协调监控 agent，spec：docs/specs/2026-09-30-cp-operator-agent）。
+        本原型 = 真实 dashboard 的完整壳（导航/告警条/八视图/hash 路由）+ 新增「干预台账」tab + view=run
+        operator 深链变体 + 手动触发对话框 operator 变体。非 operator 视图为简化假数据，但结构与类名
+        与 frontend/index.html 一致，交互（tab 切换、告警展开、看板/历史行点击）均可点。
+
+  样式：直接 <link> 引用 ../frontend/app.css（Bootstrap 5.3.3 + 仪表面板 petrol 主题）——
+        原型与实现零视觉漂移；本文件 <style> 只补 operator 专属小块（结局徽标/动作 chip/筛选 chip）。
+        打开方式：双击本文件即可（相对路径依赖仓库检出布局，prototypes/ 与 frontend/ 同源）。
+
+  入口路径（实现的接入点）：
+    · 顶部导航新增「Operator」tab（view=operator，插在执行历史之后；页面标题为「干预台账」）；
+    · 告警条/告警面板：worker_stall 等 operator 信号行深链 view=operator；「operator 巡检运行中」提示行同理；
+    · 循环页机器卡「应动未动」chip 旁「触发巡检」按钮 → 同一对话框；
+    · 干预台账行点击 → view=run&exec=operator:<32hex>（runapi operator: 前缀分支，live 读 operator Store）。
+
+  数据契约（与 v1 相同，实现照此）：
+    1) GET /api/operator?source=&outcome=&project=&q=&limit=&offset=
+       → {"ok":true,"total":n,"rows":[{
+            "id":"operator:<32hex>","signal":{"source":"alert|cp_event|watchdog|manual","kind":…,
+              "key":…,"org_repo":…,"severity":…,"message":…,"received_at":…},
+            "agent":…,"model":…,"started_at":…,"ended_at":…,"duration_s":…,
+            "state":"RUNNING|SUCCEEDED|FAILED",
+            "outcome":"RESOLVED|MITIGATED_WATCHING|ESCALATED_HUMAN|FALSE_POSITIVE_NOOP"|null,
+            "diagnosis":…,"actions":[{"verb","target","detail"}],
+            "evidence":[{"kind","ref"}],"note":"手动说明（仅 manual 行）"}],
+          "outcomes":{"RESOLVED":3,…}}
+       · 行维 = operator Store 的 executions；skipped（冷却/日额/过期）信号没起轮，不进本视图。
+    2) POST /api/operator/trigger {"note?","agent?","model?"} → {"ok":true,"id":"operator:<32hex>"}
+       | 503 {"error":"OPERATOR_DISABLED"}；手动绕过冷却/日额，仍受同 key 活跃单轮去重；note≤2000 字。
+    3) GET /api/operator/options → {"enabled","default_agent","default_model","agents":[…],
+       "scope":{"kind":"serve-host"}} —— scope 恒 serve-host：协调轮恒在面板服务主机执行与查证，
+       是真实范围不是降级（文案中性色，区别于 review 对话框的警示回退语义）。
+    4) 运行详情【零新增设计】：operator 轮复用既有 view=run 组件（设计事实源 prototypes/run-detail.html）——
+       本页 run 演示即按该组件结构渲染（面包屑/头部卡/左执行过程流/右时间线与证据）；operator 轮只是该组件
+       的又一数据变体（如同已有的「子代理执行」变体）：bind chip 走既有「轮日志（spawn-log）」档（operator
+       会话流=log tail），会话流平铺回放/思考折叠/错误标红等交互与循环轮完全一致；RUNNING 行流式追加。
+       流面板高度自适应（min 120 / max 460 内部滚动）——替代旧原型的固定 520，稀疏内容不留大片空白。
+       后端唯一改动 = runapi 加 operator: 前缀分支（live 读 operator Store，镜像兜底，payload 同形）。
+
+  结局枚举：RESOLVED 已解决（绿）/ MITIGATED_WATCHING 已缓解·观察中（琥珀）/ ESCALATED_HUMAN
+    已升级人工（紫，建 [❓needs-human] issue 进待决策列）/ FALSE_POSITIVE_NOOP 误报未动（灰）；
+    派生：RUNNING 进行中（petrol）/ FAILED 失败（红，未报告即死）。
+-->
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>code-loop dashboard · 原型（干预台账）</title>
+<link rel="stylesheet" href="../frontend/app.css">
+<style>
+  /* ---- 原型专用补充（operator 视图与对话框 note 输入；其余全部来自真实 app.css） ---- */
+  /* 2026-10-09 已落地：页面可视宽度 1400→1760px（实现见 ../frontend/app.css 的 main 规则） */
+  main{max-width:1760px}
+
+  /* ---- 2026-10-09 已落地：仪表面板美化（规则已折入 ../frontend/app.css，此处保留为设计事实源） ----
+     原则：看板管道是唯一视觉重心——列升级为「仪表通道」（本色微染 + 轨道加粗）；
+     其余只做安静精修（卡片内距/字级、chip 脆度、读数 tabular、空态减噪），不引入新色。 */
+  .kanban-col{background:color-mix(in srgb, var(--col,#64748b) 4%, transparent);
+    border-radius:.6rem;padding:.55rem .6rem .6rem}
+  .kanban-col::before{height:4px;opacity:1;margin-bottom:.6rem}
+  .kanban-col > .col-head{padding-bottom:.45rem;margin-bottom:.65rem;
+    border-bottom:1px solid color-mix(in srgb, var(--col,#64748b) 22%, transparent)}
+  .col-head .count{font-size:1.3rem}
+  .stack .card{padding:.7rem .85rem;border-radius:.55rem}
+  .stack .card .t{font-size:.9rem;font-weight:650;line-height:1.4;margin-bottom:.3rem}
+  .stack .card .s{font-size:.78rem;gap:.6rem}
+  .stack .card:hover{border-color:color-mix(in srgb, var(--col,#64748b) 45%, var(--hairline));
+    box-shadow:none}
+  .chip{font-size:.72rem;padding:.14em .55em;border-radius:.32rem;
+    box-shadow:inset 0 0 0 1px rgba(22,35,46,.05)}
+  #kanban-strip .strip{border-left-width:4px}
+  #kanban-strip .strip b{font-variant-numeric:tabular-nums;font-weight:700}
+  .stack .empty{border-color:var(--hairline);background:transparent}
+  .oc{font-weight:600;white-space:nowrap;font-size:.8rem}
+  .oc .dot{display:inline-block;width:.42rem;height:.42rem;border-radius:50%;margin-right:.4rem;vertical-align:.06rem}
+  .oc.RESOLVED{color:var(--ok)} .oc.RESOLVED .dot{background:var(--ok)}
+  .oc.MITIGATED_WATCHING{color:var(--warn)} .oc.MITIGATED_WATCHING .dot{background:var(--warn)}
+  .oc.ESCALATED_HUMAN{color:#5b4a8a} .oc.ESCALATED_HUMAN .dot{background:#5b4a8a}
+  .oc.FALSE_POSITIVE_NOOP{color:var(--muted)} .oc.FALSE_POSITIVE_NOOP .dot{background:#9aa8b2}
+  .oc.RUNNING{color:var(--acc)} .oc.RUNNING .dot{background:var(--acc);animation:ocpulse 1.6s infinite}
+  .oc.FAILED{color:var(--err)} .oc.FAILED .dot{background:var(--err)}
+  @keyframes ocpulse{0%,100%{opacity:1}50%{opacity:.35}}
+  .act{display:inline-block;font-family:var(--font-mono);font-size:.7rem;border:1px solid var(--hairline-strong);
+       border-radius:.35rem;padding:0 .38rem;margin:0 .25rem .22rem 0;color:var(--muted);
+       background:rgba(22,35,46,.04);white-space:nowrap}
+  .act.human{border-color:#d7cfe6;color:#5b4a8a;background:#f3effa}
+  .act.noop{opacity:.7}
+  .ev2{display:inline-block;font-size:.74rem;color:var(--acc);text-decoration:none;
+       margin:0 .5rem .22rem 0;border-bottom:1px dotted var(--acc);cursor:pointer}
+  .ev2:hover{color:var(--acc-deep)}
+  .fchip{background:rgba(22,35,46,.04);border:1px solid var(--hairline-strong);border-radius:999px;
+       padding:.14rem .7rem;font-size:.78rem;color:var(--muted);cursor:pointer;user-select:none;white-space:nowrap}
+  .fchip:hover{border-color:rgba(14,116,144,.5)}
+  .fchip.on{background:var(--acc);border-color:var(--acc);color:#fff}
+  .fchip .n{opacity:.75;margin-left:.25rem;font-variant-numeric:tabular-nums}
+  .rt-dlg textarea{width:100%;min-height:56px;resize:vertical;padding:.4rem .55rem;
+       border:1px solid var(--hairline-strong);border-radius:.4rem;background:#fff;font:inherit;color:inherit}
+  .rt-dlg textarea:focus{outline:none;border-color:var(--acc)}
+  .ophead{display:flex;align-items:flex-start;justify-content:space-between;gap:.8rem;margin-bottom:.7rem;flex-wrap:wrap}
+  .ophead h2{margin:0;font-size:1.05rem}
+  .ophead .sub2{color:var(--muted);font-size:.8rem}
+  .switcher{display:flex;gap:.4rem;flex-wrap:wrap;align-items:center}
+  .switcher .lbl{font-size:.75rem;color:var(--muted)}
+  .switcher .btn.on{border-color:var(--acc);background:#e9f3f6;color:var(--acc-deep)}
+  .opnote{margin-top:.8rem;font-size:.8rem;color:var(--muted);border-left:3px solid var(--acc);
+       padding:.35rem .8rem;background:var(--surface);border-radius:0 .4rem .4rem 0}
+  .diag2{font-size:.8rem;color:#33424d;max-width:460px}
+  .diag2 .note2{color:#5b4a8a;font-size:.74rem;margin-top:.15rem}
+  .sig .k2{font-weight:600;font-size:.84rem}
+  .sig .org2{color:var(--muted);font-size:.76rem}
+  .sig .msg2{color:var(--muted);font-size:.76rem;max-width:440px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  /* ---- 运行详情：既有 view=run 组件（自 prototypes/run-detail.html 移植；operator 轮零新增设计） ---- */
+  .crumbs{display:flex;gap:8px;align-items:center;margin-bottom:12px;font-size:13px;flex-wrap:wrap}
+  .crumbs b{font-size:14px}
+  .rd-head{display:flex;flex-direction:row;flex-wrap:wrap;gap:8px 18px;align-items:baseline;margin-bottom:14px}
+  .rd-head .title{flex:1 1 380px;min-width:300px}
+  .rd-h1{font-size:17px;margin:0;font-weight:650}
+  .rd-h1 .n{font-family:var(--font-mono);color:var(--acc);margin-right:6px;font-size:13.5px;word-break:break-all}
+  .rd-meta{display:flex;gap:6px 14px;flex-wrap:wrap;font-size:12.5px;color:var(--muted);align-items:center;margin-top:6px}
+  .rd-meta b{color:var(--ink);font-weight:600}
+  .rd-right{display:flex;flex-direction:column;gap:6px;align-items:flex-end}
+  .rd-chips{display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:flex-end}
+  .rd-cols{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:14px;align-items:start}
+  @media (max-width:980px){.rd-cols{grid-template-columns:1fr}}
+  .rdh2{font-size:13px;margin:0 0 8px;color:var(--muted);font-weight:600;letter-spacing:.02em}
+  .statechip{font-size:12px;padding:2px 10px;border-radius:999px;font-weight:600;white-space:nowrap}
+  .statechip.RUNNING{background:#e8f3f6;color:var(--acc)}
+  .statechip.SUCCEEDED{background:#e8f4ec;color:var(--ok)}
+  .statechip.FAILED{background:#fdeaea;color:var(--err)}
+  .chip.vio2{color:#5b4a8a;background:rgba(91,74,138,.09)}
+  .tl2{list-style:none;margin:0;padding:0}
+  .tl2 li{position:relative;padding:0 0 14px 20px;border-left:2px solid var(--hairline-strong);margin-left:6px}
+  .tl2 li:last-child{padding-bottom:2px}
+  .tl2 li::before{content:'';position:absolute;left:-6px;top:3px;width:10px;height:10px;border-radius:50%;
+    background:var(--surface);border:2px solid var(--acc)}
+  .tl2 li.done::before{background:var(--acc)}
+  .tl2 .k{font-weight:600;font-size:13px}
+  .tl2 .d{font-size:12px;color:var(--muted);font-family:var(--font-mono)}
+  .tl2 .tm{font-size:11px;color:#9aa7b1;font-family:var(--font-mono)}
+  #run-stream{height:auto;min-height:120px;max-height:460px;overflow-y:auto;
+    border:1px solid var(--hairline-strong);border-radius:8px;background:#fbfcfd;padding:8px 0}
+  .run-ev .tm{font-family:var(--font-mono);font-size:11px;color:#9aa7b1;flex:none;padding-top:2px}
+</style>
+</head>
+<body>
+<div id="navbar-wrap">
+<nav class="navbar sticky-top bg-body-tertiary border-bottom py-2 px-3 flex-wrap gap-2">
+  <span class="navbar-brand d-flex align-items-center gap-2 fw-semibold my-0">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <circle cx="12" cy="12" r="9" style="stroke:var(--bs-primary)" stroke-width="2.4"
+        stroke-dasharray="40 16" stroke-linecap="round"/>
+      <circle cx="12" cy="12" r="3.2" style="fill:var(--bs-primary)"/>
+    </svg>
+    code-loop dashboard
+  </span>
+  <div class="nav nav-pills gap-1" id="tabs">
+    <button data-v="kanban" class="nav-link active">看板</button>
+    <button data-v="history" class="nav-link">执行历史</button>
+    <button data-v="operator" class="nav-link">Operator</button>
+    <button data-v="projects" class="nav-link">项目</button>
+    <button data-v="pipeline" class="nav-link">Issue/PR</button>
+    <button data-v="loops" class="nav-link">循环</button>
+    <button data-v="trends" class="nav-link">趋势</button>
+    <button data-v="events" class="nav-link">活动</button>
+  </div>
+  <div class="d-flex align-items-center gap-2 ms-auto flex-wrap">
+    <select id="proj-filter" class="form-select form-select-sm" style="width:auto">
+      <option value="">全部项目</option><option>mocx__skills</option>
+      <option>yilian__ai_vector</option><option>yilian__ai_quality_analysis</option></select>
+    <button id="collect-btn" class="btn btn-sm btn-outline-primary"
+    title="从平台重新拉取数据（只读操作）">立即采集</button>
+    <span id="fresh" class="small text-body-secondary">加载中…</span>
+  </div>
+</nav>
+<div id="alertbar" title="点击展开全部告警" role="button" tabindex="0" aria-expanded="false" aria-controls="alert-panel">
+  <span class="badge text-bg-danger" id="b-err">错误 1</span>
+  <span class="badge text-bg-warning" id="b-warn">注意 3</span>
+  <span class="badge text-bg-secondary" id="b-info">提示 2</span>
+  <span id="alert-items"></span></div>
+<div id="alert-panel" hidden></div>
+</div>
+<div id="focus-bar" style="display:none"><span class="t" id="focus-label"></span></div>
+<div class="strip" style="margin:8px 12px 0;font-size:12.5px">🧪 2026-10-10 原型增量（issue #314/#315 待确认）：采集异步单飞——点「立即采集」<b>立即返回、页面不卡</b>；采集中的重复触发并入同一轮；切视图卸载非活动视图 DOM、切回自动重载。<b>本条为演示说明，非最终 UI。</b></div>
+
+<main>
+  <!-- ============ 看板 ============ -->
+  <section class="view active" id="view-kanban">
+    <div id="kanban-strip"></div>
+    <div id="kanban-board" class="kanban"></div>
+  </section>
+
+  <!-- ============ 运行详情（循环轮 + operator 轮共用，深链 view=run&exec=） ============ -->
+  <section class="view" id="view-run">
+    <div id="run-detail"></div>
+  </section>
+
+  <!-- ============ 执行历史（简化） ============ -->
+  <section class="view" id="view-history">
+    <div class="card" style="margin-bottom:14px">
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <div class="btn-group btn-group-sm" role="group" id="hist-src">
+          <button type="button" class="btn btn-outline-primary active" data-src="all">全部</button>
+          <button type="button" class="btn btn-outline-primary" data-src="loop">循环轮次</button>
+          <button type="button" class="btn btn-outline-primary" data-src="agent">子代理档案</button></div>
+        <select id="hist-state" class="form-select form-select-sm" style="width:auto">
+          <option value="">全部状态</option><option value="RUNNING">运行中</option>
+          <option value="SUCCEEDED">成功</option><option value="FAILED">失败</option>
+          <option value="CANCELLED">已取消</option></select>
+        <span class="small mut" id="hist-cnt"></span></div>
+    </div>
+    <div id="hist-table"></div>
+  </section>
+
+  <!-- ============ 干预台账（operator · 本原型主角） ============ -->
+  <section class="view" id="view-operator">
+    <div class="ophead">
+      <div>
+        <h2>干预台账</h2>
+        <div class="sub2">协调监控 agent 的每次巡检：信号 → 诊断 → 动作 → 结局 · 点击行进运行详情</div>
+      </div>
+      <div class="d-flex align-items-center gap-2 flex-wrap">
+        <div class="switcher">
+          <span class="lbl">服务端状态（原型专用）：</span>
+          <button class="btn btn-sm btn-outline-primary on" id="sw-on">operator 已启用</button>
+          <button class="btn btn-sm btn-outline-primary" id="sw-off">未启用（503）</button>
+        </div>
+        <button class="btn btn-sm btn-primary" id="op-trigger-btn">手动触发协调巡检</button>
+      </div>
+    </div>
+    <div class="d-flex align-items-center gap-2 flex-wrap" style="margin-bottom:.55rem">
+      <select id="op-src" class="form-select form-select-sm" style="width:auto">
+        <option value="all">全部来源</option><option value="alert">告警</option>
+        <option value="cp_event">CP 事件</option><option value="watchdog">watchdog</option>
+        <option value="manual">手动</option></select>
+      <span class="fchip on" data-oc="all">全部</span>
+      <span class="fchip" data-oc="RUNNING">进行中</span>
+      <span class="fchip" data-oc="RESOLVED">已解决</span>
+      <span class="fchip" data-oc="MITIGATED_WATCHING">已缓解·观察中</span>
+      <span class="fchip" data-oc="ESCALATED_HUMAN">已升级人工</span>
+      <span class="fchip" data-oc="FALSE_POSITIVE_NOOP">误报未动</span>
+      <span class="fchip" data-oc="FAILED">失败</span>
+      <select id="op-proj" class="form-select form-select-sm" style="width:auto">
+        <option value="all">全部项目</option><option>mocx__skills</option>
+        <option>yilian__ai_vector</option><option value="none">（机器全局）</option></select>
+      <input id="op-q" class="form-control form-control-sm" style="width:190px" placeholder="搜信号 / 诊断 / 动作…">
+    </div>
+    <div class="card" style="padding:0;overflow:hidden">
+      <table class="table mb-0"><thead><tr>
+        <th style="width:108px">时间</th><th style="width:80px">来源</th>
+        <th>信号与诊断</th><th style="width:225px">动作与证据</th>
+        <th style="width:122px">结局</th><th style="width:90px">agent</th>
+      </tr></thead><tbody id="op-rows"></tbody></table>
+    </div>
+    <div class="d-flex justify-content-between small mut" style="margin-top:.5rem">
+      <span id="op-cnt"></span><span>每页 50 条 · 只读台账，动作留痕在 operator Store 审计事件</span></div>
+    <div class="opnote">交互说明：行点击进入<b>既有 view=run 运行详情组件</b>（exec=operator:&lt;32hex&gt;，
+      组件设计事实源 = prototypes/run-detail.html，operator 轮零新增设计——bind chip 走既有「轮日志」档，
+      头部/时间线/证据换 operator 数据，会话流平铺回放交互与循环轮完全一致）；证据链接（issue/指令）行内直接跳转；
+      「已升级人工」的 issue 带 [❓needs-human] 标题、自动进看板「待决策」列；进行中行的会话流实时追加。
+      skipped（冷却/日额/过期）信号没起轮、不进本视图，决策留痕在 operator-log.jsonl。</div>
+  </section>
+
+  <!-- ============ 项目（简化） ============ -->
+  <section class="view" id="view-projects">
+    <div class="cards" id="project-cards"></div>
+  </section>
+
+  <!-- ============ Issue/PR 流水（简化） ============ -->
+  <section class="view" id="view-pipeline">
+    <div id="flow-strip" class="flow-strip"></div>
+    <h2 class="section">Pull Requests</h2><div id="pr-table"></div>
+    <h2 class="section">Issues <span class="small mut" style="font-weight:400">默认显示 open 与近 7 天关闭</span></h2>
+    <div id="issue-table"></div>
+  </section>
+
+  <!-- ============ 循环（机器卡含 operator 触发入口） ============ -->
+  <section class="view" id="view-loops">
+    <h2 class="section">接入机器</h2><div id="machines" class="cards mb-2"></div>
+    <h2 class="section">循环活动</h2><div id="loop-cards" class="cards"></div>
+    <h2 class="section">Control Plane 运行时
+      <select class="form-select form-select-sm d-inline-block w-auto align-middle ms-2">
+        <option>mocx__skills</option><option>yilian__ai_vector</option></select></h2>
+    <div class="card" id="runtime"></div>
+  </section>
+
+  <!-- ============ 趋势（简化） ============ -->
+  <section class="view" id="view-trends">
+    <div class="cards" id="cycle-cards" style="margin-bottom:1rem"></div>
+    <div id="chart-wrap">
+      <div class="legend" id="chart-legend"></div>
+      <svg id="chart" width="100%" height="240" viewBox="0 0 600 200" preserveAspectRatio="none" role="img"></svg>
+    </div>
+  </section>
+
+  <!-- ============ 活动（含 operator.act 审计行） ============ -->
+  <section class="view" id="view-events">
+    <div class="d-flex align-items-center gap-2 flex-wrap" style="margin-bottom:.4rem">
+      <h2 class="section my-0">活动时间线</h2>
+      <select class="form-select form-select-sm w-auto"><option>近 7 天</option></select>
+      <span class="small mut" id="ev-total"></span>
+    </div>
+    <div class="ev-bar" style="margin-bottom:.6rem" id="ev-bar"></div>
+    <div id="ev-list"></div>
+  </section>
+</main>
+
+<!-- 手动触发协调巡检对话框（真实类名 .rt-*，operator 变体：无 PR 行 / note 输入 / scope 恒 serve-host） -->
+<div class="rt-backdrop" id="rt-bd" onclick="if(event.target===this)rtClose()">
+  <div class="rt-dlg" role="dialog" aria-modal="true" aria-labelledby="rt-title">
+    <header id="rt-title">手动触发协调巡检</header>
+    <div class="rt-body">
+      <div>
+        <div class="rt-label mb-1" id="rt-agent-label">协调 agent（本次覆盖；默认值存机器配置）</div>
+        <div class="rt-agents" id="rt-agents" role="radiogroup" aria-labelledby="rt-agent-label"></div>
+      </div>
+      <div class="rt-scope" id="rt-scope" style="display:none"></div>
+      <div id="rt-model-field" style="display:none">
+        <div class="rt-label mb-1">模型 <span id="rt-model-state"></span></div>
+        <select id="rt-model" disabled><option value="">默认</option></select>
+      </div>
+      <div>
+        <div class="rt-label mb-1">情况说明（可选，≤2000 字——会话据此定向排查）</div>
+        <textarea id="rt-note" maxlength="2000"
+          placeholder="例：GPU-02 的 reviewer 两轮没动静，帮我看下是不是又卡租约了"></textarea>
+        <div class="small mut text-end"><span id="rt-note-cnt">0</span>/2000</div>
+      </div>
+      <div class="rt-hint" id="rt-hint"></div>
+    </div>
+    <footer>
+      <button class="btn btn-sm btn-outline-primary" onclick="rtClose()">取消</button>
+      <button class="btn btn-sm btn-primary" id="rt-go" onclick="rtConfirm()">开始巡检</button>
+    </footer>
+  </div>
+</div>
+
+<script>
+'use strict';
+// ===================== 工具 =====================
+const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
+function esc(s){return String(s).replace(/[&<>"']/g,
+  c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+function dur(s){if(s==null)return '—';const m=Math.floor(s/60);return m?m+'m'+(s%60)+'s':s+'s'}
+const OC_LABEL={RESOLVED:'已解决',MITIGATED_WATCHING:'已缓解·观察中',ESCALATED_HUMAN:'已升级人工',
+  FALSE_POSITIVE_NOOP:'误报未动',RUNNING:'进行中',FAILED:'失败'};
+const ocKey=r=>r.state==='RUNNING'?'RUNNING':(r.state==='FAILED'?'FAILED':r.outcome);
+function ocHtml(key){return '<span class="oc '+key+'"><span class="dot"></span>'+OC_LABEL[key]+'</span>'}
+
+// ===================== 干预台账数据（GET /api/operator 假数据） =====================
+const OPS=[
+ {id:'operator:9f2ab041c7d5e83a90b1c7',signal:{source:'alert',kind:'loop_stall',
+   key:'loop_stall|mocx__skills|handler',org_repo:'mocx__skills',severity:'high',
+   message:'mocx__skills handler 距上次活动 7.5h（阈值 7.5h）'},
+  agent:'claude',model:null,started_at:'09-30 16:42',duration_s:642,state:'SUCCEEDED',outcome:'RESOLVED',
+  diagnosis:'handler 队列头部 repair:617 的 worktree 残留占用 path:* 锁——前轮进程死后未回收；重发指令后新轮正常接管',
+  actions:[{verb:'command_resend',target:'repair_round #617'},{verb:'no_op',target:'—'}],
+  evidence:[{kind:'command',ref:'指令 #941 重发'},{kind:'run',ref:'接管轮 6149…'}]},
+ {id:'operator:5c1e77a2b3d4',signal:{source:'alert',kind:'worker_stall',
+   key:'worker_stall|GPU-02|reviewer',org_repo:'yilian__ai_vector',severity:'high',
+   message:'GPU-02 reviewer 应动未动：READY 已等待 4.2h'},
+  agent:'opencode',model:'kimi-for-coding/k3',started_at:'09-30 15:10',duration_s:1130,
+  state:'SUCCEEDED',outcome:'MITIGATED_WATCHING',
+  diagnosis:'reviewer 轮反复 claim 后死，4h 租约尸体占满 3 槽（max_parallel=3）→ 本机轮饿死；立即清扫已过期租约，槽位释放',
+  actions:[{verb:'sweep_expired',target:'3 条过期租约'},{verb:'gitea_create_issue',target:'issue #308'}],
+  evidence:[{kind:'issue',ref:'#308 僵尸槽位复发'}]},
+ {id:'operator:b8d3f0a19c',signal:{source:'alert',kind:'pr_blocked',
+   key:'pr_blocked|mocx__skills|253',org_repo:'mocx__skills',severity:'mid',
+   message:'PR #253 判词 Blocked：base-defect 红门禁（GBK 编码 9 文件）'},
+  agent:'claude',model:null,started_at:'09-30 11:05',duration_s:877,state:'SUCCEEDED',
+  outcome:'ESCALATED_HUMAN',
+  diagnosis:'归因 = main 分支 base 存在坏提交，修复须对 base 提 PR——超出 operator 白名单（不碰 base/不代合并），升级人工决策',
+  actions:[{verb:'escalate_human',target:'issue #306 [❓needs-human]'}],
+  evidence:[{kind:'issue',ref:'#306 base-defect 修复方案'}]},
+ {id:'operator:e07f3c55',signal:{source:'cp_event',kind:'sync.failed',
+   key:'sync.failed|mocx__skills|EXAM_INVALID',org_repo:'mocx__skills',severity:'high',
+   message:'EXAM_INVALID：考题 schema verification_fast 未识别'},
+  agent:'claude',model:null,started_at:'09-30 09:20',duration_s:503,state:'SUCCEEDED',
+  outcome:'MITIGATED_WATCHING',
+  diagnosis:'cp_server 常驻进程仍是旧代码，不认识新考题键；修复已在合并队列，需重启 serve——重启属白名单外（watchdog 域），观察合并后人工重启',
+  actions:[{verb:'gitea_comment_issue',target:'issue #287 进度评论'},{verb:'no_op',target:'—'}],
+  evidence:[{kind:'issue',ref:'#287'}]},
+ {id:'operator:a3ba90ee',signal:{source:'alert',kind:'lease_expired',
+   key:'lease_expired|mocx__skills|reviewer',org_repo:'mocx__skills',severity:'low',
+   message:'reviewer 租约过期告警连续 3 次'},
+  agent:'pi',model:null,started_at:'09-30 08:44',duration_s:214,state:'SUCCEEDED',
+  outcome:'FALSE_POSITIVE_NOOP',
+  diagnosis:'看板短 TTL 是 abandon 写 now-1 的假象（非租约过短），实际执行已终态——告警判据误报，未动作',
+  actions:[{verb:'no_op',target:'—'}],evidence:[]},
+ {id:'operator:c9d407ab',signal:{source:'manual',kind:'manual',
+   key:'manual|2026-09-30T16:02',org_repo:'',severity:'mid',message:'手动触发（无自动信号）'},
+  agent:'claude',model:null,started_at:'09-30 16:02',duration_s:731,state:'SUCCEEDED',outcome:'RESOLVED',
+  diagnosis:'全链路体检：三循环调度正常、CP server 双端口探活通过、采集无积压、outbox 无未决——未发现异常',
+  actions:[{verb:'no_op',target:'—'}],evidence:[],
+  note:'下午手动合了两个 PR，帮我整体巡一遍确认没有遗留卡点'},
+ {id:'operator:f1a0d2b8',signal:{source:'alert',kind:'loop_stall',
+   key:'loop_stall|yilian__ai_vector|reviewer',org_repo:'yilian__ai_vector',severity:'high',
+   message:'yilian__ai_vector reviewer 距上次活动 9.1h'},
+  agent:'claude',model:null,started_at:'09-30 16:55',duration_s:null,state:'RUNNING',outcome:null,
+  diagnosis:null,actions:[],evidence:[]},
+ {id:'operator:7e22c4d9',signal:{source:'watchdog',kind:'watchdog_spawn',
+   key:'watchdog|code-loop-cp-serve',org_repo:'',severity:'mid',
+   message:'watchdog 拉起 code-loop-cp-serve（探活失败后 5min 内）'},
+  agent:'claude',model:null,started_at:'09-30 07:12',duration_s:96,state:'FAILED',outcome:null,
+  diagnosis:null,actions:[],evidence:[]},
+];
+
+// run 详情数据：时间线 + 会话流（终稿会话静态；RUNNING 用 LIVE 脚本流式追加）
+const RUN_TL={
+ operator:{claimed:'execution.claimed（worker=DESKTOP-MOCX/operator，ttl=300s）',
+   spawned:'command.dispatched → agent spawn（claude -p headless）',
+   report:'report 校验通过（动作 ⊆ 白名单、结局枚举合法、审计对账一致）→ 终态推导'},
+ loop:{claimed:'execution.claimed（loop=reviewer，ttl=300s）',
+   worktree:'worktree 检出 review-pr-285（validate_worktree 归属校验通过）',
+   bind:'会话绑定（首条消息含 execution uuid）',
+   verify:'verify passed（pytest 全绿 · exam 来源=repo）',
+   report:'report APPROVE(edit_pr) → publish SENT'}};
+const SESSION_DONE=[
+ ['text','读取 operator.md 规则文档，确认信号查证路径与白名单边界。'],
+ ['tool','control_plane.py status --project mocx__skills'],
+ ['think','handler 最后活动 09-30 09:12；work_items READY=1 但无活跃执行——怀疑环境侧卡死。'],
+ ['tool','sqlite3 state/control-plane.sqlite "select * from executions where state=\'RUNNING\'"'],
+ ['text','发现 repair:617 残留执行：进程已死、租约未到期、worktree 未清理，占 path:* 锁。'],
+ ['tool','control_plane.py status --json | jq \'.commands[-1]\''],
+ ['text','符合白名单 command_resend：重发 repair_round 指令，新轮接管后旧锁随 sweep 释放。'],
+ ['text','复核：新执行已 claim，流式正常。报告结论 RESOLVED。']];
+const LIVE_SCRIPT=[
+ ['text','读取 operator.md，开始查证 loop_stall · yilian__ai_vector · reviewer。'],
+ ['tool','dashboard.py status --project yilian__ai_vector'],
+ ['think','reviewer 上轮 07:44 结束后无新执行；READY 队列 2 项在等——符合「应动未动」。'],
+ ['tool','GET /api/workers → GPU-02 reviewer worker last_seen=07:58'],
+ ['text','疑似 worker agent 掉线或槽位占满，继续查 CP 侧租约与槽位占用…'],
+ ['tool','sqlite3 control-plane.sqlite "select worker,count(*) from executions where state=\'RUNNING\' group by worker"'],
+ ['text','（会话进行中——运行详情实时刷新，与审核中卡同一节奏）']];
+const SESSION_DEAD=[
+ ['text','读取 operator.md，检查 watchdog 拉起记录…'],
+ ['err','PROCESS_DIED：会话进程死亡（退出码未捕获），liveness 守望 30s+120s 确认后 FAILED ack。'],
+ ['text','未产生 report；台账按派生态 FAILED 展示（区别于会话自报结局）。']];
+
+// ===================== hash 路由（与真实面板同款 #view=… 深链） =====================
+const TAB_VIEWS=['kanban','history','operator','projects','pipeline','loops','trends','events'];
+let liveTimer=null;
+function stopLive(){if(liveTimer){clearInterval(liveTimer);liveTimer=null}
+  if(window.__leaseTimer){clearInterval(window.__leaseTimer);window.__leaseTimer=null}}
+function H(){const h=location.hash.replace(/^#/,'');const p=new URLSearchParams(h);
+  return {view:p.get('view')||'kanban',exec:p.get('exec'),p:p.get('p')}}
+function applyHash(){
+  stopLive();closeAlertPanel();
+  const {view,exec}=H();
+  $$('.view').forEach(s=>s.classList.toggle('active',s.id==='view-'+view));
+  $$('#tabs .nav-link').forEach(b=>b.classList.toggle('active',
+    b.dataset.v===view&&TAB_VIEWS.includes(view)));
+  if(view==='run')renderRun(exec);
+  if(view==='operator')renderOps();
+  window.scrollTo(0,0);
+}
+$$('#tabs .nav-link').forEach(b=>b.onclick=()=>{location.hash='view='+b.dataset.v});
+window.addEventListener('hashchange',applyHash);
+function goRun(id){location.hash='view=run&exec='+encodeURIComponent(id)}
+
+// ===================== 告警条 =====================
+const ALERTS=[
+ {sev:'err',rule:'worker_stall',proj:'yilian__ai_vector',msg:'GPU-02 reviewer 应动未动（READY 等待 4.2h）',go:'loops'},
+ {sev:'warn',rule:'loop_stall',proj:'yilian__ai_vector',msg:'reviewer 距上次活动 9.1h',go:'loops'},
+ {sev:'warn',rule:'pr_blocked',proj:'mocx__skills',msg:'PR #253 Blocked：base-defect 红门禁',go:'kanban'},
+ {sev:'warn',rule:'lease_expired',proj:'mocx__skills',msg:'reviewer 租约过期（下轮 claim 自动接管）',go:'kanban'},
+ {sev:'info',rule:'machine_disabled',proj:'（机器）',msg:'dev-b 已停用',go:'loops'},
+ {sev:'info',rule:'operator_running',proj:'yilian__ai_vector',msg:'operator 巡检运行中（loop_stall 信号）',go:'operator'}];
+$('#alert-items').innerHTML=ALERTS.slice(0,3).map(a=>
+  '<span class="sev-dot sev-'+a.sev+'"></span>'+esc(a.rule)+' · '+esc(a.proj)).join('　')+' …';
+function closeAlertPanel(){$('#alert-panel').hidden=true;$('#alertbar').setAttribute('aria-expanded','false')}
+$('#alertbar').onclick=()=>{
+  const p=$('#alert-panel');
+  if(!p.hidden){closeAlertPanel();return}
+  p.innerHTML='<div class="card">'+ALERTS.map((a,i)=>
+    '<div class="alert-row sev-'+a.sev+'" data-i="'+i+'"><span class="proj">'+esc(a.proj)+'</span>'
+    +'<span class="badge text-bg-'+(a.sev==='err'?'danger':a.sev==='warn'?'warning':'secondary')
+    +'">'+esc(a.rule)+'</span><span style="flex:1">'+esc(a.msg)+'</span>'
+    +(a.go==='operator'?'<span class="chip acc">进 Operator →</span>':'')
+    +'</div>').join('')+'</div>';
+  p.hidden=false;$('#alertbar').setAttribute('aria-expanded','true');
+  p.querySelectorAll('.alert-row').forEach(r=>r.onclick=e=>{
+    e.stopPropagation();closeAlertPanel();
+    const a=ALERTS[+r.dataset.i];
+    location.hash='view='+a.go;});
+};
+$('#alertbar').onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();$('#alertbar').click()}};
+
+// ===================== 看板 =====================
+$('#kanban-strip').innerHTML=
+ '<div class="strip ok">全系统 24h：轮次 <b>41</b> · 成功 <b>37</b> · 失败 <b>3</b> · 待人工 <b>2</b></div>'
++'<div class="strip">operator 24h：巡检 <b>8</b> 轮 · 已解决 <b>3</b> · 已缓解 <b>2</b> · 升级人工 <b>1</b> · 误报 <b>1</b></div>';
+const KCOLS=[
+ {cls:'k-ready',name:'待处理 Issue',cards:[
+   {t:'#306 [❓needs-human] base-defect 修复方案（operator 升级）',s:['main','2h'],chips:[['warn','待决策'],['mut','operator 建']]},
+   {t:'#307 handler 队列卡死恢复复盘',s:['feature/mocx/…','5h'],chips:[['mut','open']]},
+   {t:'#309 query-logs debug 链路文档补充',s:['docs','1d'],chips:[['mut','open']]},
+   {t:'#310（ai_vector）reviewer 槽位上限调优',s:['config','1d'],chips:[['mut','open']]}]},
+ {cls:'k-run',name:'处理中',cards:[
+   {t:'repair:284 PR#284 review-fix（probe 解除冷却死锁）',s:['review-pr-284','进行中 42m'],chips:[['acc','handler']]},
+   {t:'ISSUE_IMPLEMENTATION #309',s:['issue-309','进行中 18m'],chips:[['acc','handler']]}]},
+ {cls:'k-review',name:'待评审',cards:[
+   {t:'#285 PR_REVIEW_FIX 临时修复分支 publish 推回原分支',s:['fix/mocx/pr-review-fix','3h'],chips:[['mut','mergeable']]},
+   {t:'#287 考题 verification_fast 兼容',s:['feature/mocx/exam-keys','6h'],chips:[['err','base-defect']]},
+   {t:'#288 dash 告警深链整理',s:['feature/mocx/alert-links','8h'],chips:[['mut','mergeable']]}]},
+ {cls:'k-reviewing',name:'审核中',cards:[
+   {t:'review:285 评审 PR#285',s:['exec 3f8b11ad…','流式进行中'],chips:[['acc','reviewer']],run:'3f8b11ad90c1d2e3f4a5b6c7d8e9f001'}]},
+ {cls:'k-blocked',name:'待决策',cards:[
+   {t:'#306 base-defect 修复方案（1A 对 base 提 PR / 1B 暂缓）',s:['needs-human','2h'],chips:[['warn','等用户']]},
+   {t:'#18 [Gap] 决策未消费追踪',s:['needs-human','9d'],chips:[['warn','等用户']]}]}];
+function renderBoard(){
+  $('#kanban-board').innerHTML=KCOLS.map((c,ci)=>{
+    return '<div class="kanban-col '+c.cls+'"><h2 class="col-head" data-ci="'+ci+'"'
+      +'><span class="count">'
+      +c.cards.length+'</span>'+esc(c.name)+'</h2><div class="stack">'
+      +c.cards.map(k=>'<div class="card" data-run="'+(k.run||'')+'"><div class="t">'+esc(k.t)+'</div>'
+        +'<div class="s">'+k.s.map(x=>'<span class="mono">'+esc(x)+'</span>').join('')+'</div>'
+        +'<div style="margin-top:.3rem">'+k.chips.map(ch=>
+          '<span class="chip '+ch[1]+'">'+esc(ch[0])+'</span>').join('')+'</div></div>').join('')
+      +'</div></div>';}).join('');
+  $$('#kanban-board .kanban-col .card').forEach(el=>{
+    const id=el.dataset.run;
+    el.onclick=()=>{if(id)goRun(id);
+      else alert('演示：该卡片交互属既有功能（决策详情/列过滤等），本原型聚焦 operator 视图')};});
+}
+renderBoard();
+
+// ===================== 执行历史（简化） =====================
+const HIST=[
+ {id:'3f8b11ad90c1d2e3f4a5b6c7d8e9f001',kind:'loop',loop:'review_round',project:'mocx__skills',
+  title:'看板触发审核 PR #285（手动触发）',state:'RUNNING',agent:'claude',at:'09-30 16:58',dur:null},
+ {id:'operator:f1a0d2b8',kind:'operator',loop:'operator',project:'yilian__ai_vector',
+  title:'loop_stall 巡检（reviewer 9.1h 无活动）',state:'RUNNING',agent:'claude',at:'09-30 16:55',dur:null},
+ {id:'operator:9f2ab041c7d5e83a90b1c7',kind:'operator',loop:'operator',project:'mocx__skills',
+  title:'loop_stall 巡检（handler 7.5h）→ RESOLVED',state:'SUCCEEDED',agent:'claude',at:'09-30 16:42',dur:642},
+ {id:'exec_6149',kind:'loop',loop:'handler',project:'mocx__skills',
+  title:'repair:617 接管轮（operator 重发指令）',state:'SUCCEEDED',agent:'claude',at:'09-30 16:20',dur:511},
+ {id:'zcode:sess_9b93ddb3',kind:'agent',platform:'zcode',project:'（交互会话）',
+  title:'vibe-coding 复杂任务：operator 方案规划',state:'completed',agent:'zcode',at:'09-30 14:05',dur:4210},
+ {id:'operator:7e22c4d9',kind:'operator',loop:'operator',project:'（机器全局）',
+  title:'watchdog 拉起记录巡检 → FAILED（进程死亡）',state:'FAILED',agent:'claude',at:'09-30 07:12',dur:96}];
+const TAG_CLS={loop:'acc',operator:'mut',zcode:'mut',claude:'mut'};
+function renderHist(){
+  const src=$('#hist-src .btn.active').dataset.src,st=$('#hist-state').value;
+  let n=0;
+  $('#hist-table').innerHTML='<div class="card" style="padding:0;overflow:hidden"><table class="table mb-0"><thead><tr>'
+   +'<th>开始时间</th><th>项目</th><th>来源</th><th>任务 / 轮次</th><th>状态</th><th>agent</th><th>耗时</th>'
+   +'</tr></thead><tbody>'+HIST.filter(r=>{
+      if(src!=='all'&&(src==='loop'?r.kind!=='loop':r.kind!=='agent'))return false;
+      if(st&&r.state!==st)return false;return true;
+    }).map(r=>{
+      n++;
+      const tag=r.kind==='loop'?'<span class="chip acc">循环·'+r.loop+'</span>'
+        :r.kind==='operator'?'<span class="chip mut">operator</span>'
+        :'<span class="chip mut">'+r.platform+'</span><span class="chip mut">子代理</span>';
+      return '<tr data-id="'+esc(r.id)+'"><td class="num">'+r.at+'</td><td>'+esc(r.project)+'</td><td>'+tag+'</td>'
+        +'<td style="max-width:420px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+esc(r.title)+'">'+esc(r.title)+'</td>'
+        +'<td class="st" style="color:'+(r.state==='SUCCEEDED'||r.state==='completed'?'var(--ok)'
+          :r.state==='FAILED'||r.state==='error'?'var(--err)':r.state==='RUNNING'||r.state==='running'?'var(--acc)':'var(--warn)')+'">'
+        +esc(r.state)+'</td><td>'+r.agent+'</td><td class="num">'+dur(r.dur)+'</td></tr>';
+    }).join('')+'</tbody></table></div>';
+  $('#hist-cnt').textContent='共 '+n+' 条（演示数据）';
+  $$('#hist-table tbody tr').forEach(tr=>tr.onclick=()=>{
+    const id=tr.dataset.id;
+    if(id.startsWith('operator:')||/^[0-9a-f]{32}$/.test(id))goRun(id);
+    else alert('演示：agent 档案行进 view=run（bind=agent-session 子会话直读）——既有功能');});
+}
+$$('#hist-src .btn').forEach(b=>b.onclick=()=>{
+  $$('#hist-src .btn').forEach(x=>x.classList.remove('active'));b.classList.add('active');renderHist()});
+$('#hist-state').onchange=renderHist;
+
+// ===================== 运行详情（复用既有 view=run 组件——设计事实源 prototypes/run-detail.html；
+//   operator 轮零新增设计：bind=「轮日志」档，仅头部/时间线/证据的数据不同，交互与循环轮完全一致） =====================
+const OUTCOME_CHIP={RESOLVED:['ok','✓ 已解决'],MITIGATED_WATCHING:['warn','◐ 已缓解·观察中'],
+  ESCALATED_HUMAN:['vio2','⚑ 已升级人工'],FALSE_POSITIVE_NOOP:['mut','· 误报未动']};
+const STATE_CHIP={RUNNING:['RUNNING','● 运行中'],SUCCEEDED:['SUCCEEDED','✓ 已完成'],
+  FAILED:['FAILED','✕ 失败']};
+function rdFold(tx){const prev=tx.length>88?tx.slice(0,88)+'……':tx;
+  return '<details class="run-fold"><summary>'+esc(prev)+'</summary><div class="run-full">'
+    +esc(tx)+'</div></details>'}
+function rdRow(e){
+  const body=e.st==='think'?rdFold(e.tx):esc(e.tx);
+  return '<div class="run-ev '+e.st+(e.err?' err':'')+'">'
+    +'<span class="tx">'+body+(e.out?'<div style="margin-top:4px;font-family:var(--font-mono);'
+    +'font-size:12px;color:#5c6b78;background:#f2f5f7;border:1px solid var(--hairline);border-radius:6px;'
+    +'padding:5px 8px;max-height:130px;overflow-y:auto">'+esc(e.out)+'</div>':'')+'</span></div>'}
+function rdCrumbs(from,onclickExpr,hashHint){
+  return '<div class="crumbs"><a class="verify-link" href="javascript:void(0)" onclick="'
+    +onclickExpr+'">← 返回'+from+'</a><span class="small mut">/</span><span class="small mut">'
+    +esc(from)+'</span><span class="small mut">/</span><b>运行详情</b><span class="mono small mut">'
+    +esc(hashHint)+'</span></div>'}
+function rdTl(rows){return '<ul class="tl2">'+rows.map(t=>'<li'+(t[3]?' class="done"':'')
+  +'><div class="k">'+esc(t[1])+'</div><div class="d">'+esc(t[2])+'</div><div class="tm">'+esc(t[0])
+  +'</div></li>').join('')+'</ul>'}
+function rdEvid(items){return items.map(v=>'<div style="margin-bottom:8px"><span class="chip '+v[1]
+  +'">'+esc(v[0])+'</span> <span class="small mut">'+esc(v[2])+'</span></div>').join('')}
+function renderRun(exec){
+  const d=$('#run-detail');
+  if(!exec){d.innerHTML='<div class="card">缺少 exec 参数（深链应为 #view=run&exec=…）</div>';return}
+  if(exec.startsWith('operator:')){
+    const r=OPS.find(x=>x.id===exec);
+    if(!r){d.innerHTML='<div class="card">未找到 '+esc(exec)+'（演示数据仅含台账行）</div>';return}
+    const s=r.signal,running=r.state==='RUNNING';
+    const tl=[['16:55:03','command.enqueued','action=operator_round · target=DESKTOP-MOCX',1],
+              ['16:55:03','command.dispatched','推活 serve 主机 worker agent',1],
+              ['16:55:05','execution.claimed','kind=operator · ttl=300s · 无 worktree/bind',1],
+              ['16:55:06','spawn','claude -p headless · 轮日志 executions/f1a0….log',1]];
+    const evid=[['信号',s.severity==='high'?'err':s.severity==='mid'?'warn':'mut',s.kind+' · '+s.key],
+                ['worker','mut','@DESKTOP-MOCX/operator · agent='+r.agent+(r.model?' · '+r.model:'')]];
+    let sess=[];
+    if(running){tl.push(['…','（进行中）','report 未到 · 租约续期中',0]);}
+    else if(r.state==='FAILED'){
+      tl.push(['07:13:36','liveness 守望','PROCESS_DIED → FAILED ack（台账派生态，非会话自报）',0]);
+      evid.push(['结局','err','失败（未报告即死）——指令可重派']);
+      sess=SESSION_DEAD.map(x=>({st:x[0],tx:x[1],err:x[0]==='err'}));
+    }else{
+      tl.push([r.started_at,'execution.reported',RUN_TL.operator.report,0]);
+      evid.push(['report','acc',OC_LABEL[r.outcome]+' · 动作 '
+        +(r.actions||[]).map(a=>a.verb).join('、')+'（operator.act 审计对账一致）']);
+      (r.evidence||[]).forEach(e=>evid.push([e.kind==='issue'?'issue':'凭证','mut',e.ref]));
+      sess=SESSION_DONE.map(x=>({st:x[0],tx:x[1]}));
+    }
+    d.innerHTML=rdCrumbs('Operator',"location.hash='view=operator'",
+        '#view=run&exec=operator%3A'+r.id.slice(9))
+      +'<div class="card rd-head"><div class="title">'
+      +'<div class="rd-h1"><span class="n">'+esc(r.id)+'</span>'+esc(s.message)+'</div>'
+      +'<div class="rd-meta"><span><b>'+(s.org_repo||'机器全局')+'</b></span>'
+      +'<span>worker <b>@DESKTOP-MOCX/operator</b></span>'
+      +'<span class="chip acc">'+esc(s.kind)+'</span>'
+      +'<span class="chip mut">'+esc(r.agent)+(r.model?' · '+esc(r.model):'')+'</span>'
+      +'<span class="mono">'+r.started_at+' · '+dur(r.duration_s)+'</span></div></div>'
+      +'<div class="rd-right"><div class="rd-chips">'
+      +'<span class="statechip '+STATE_CHIP[r.state][0]+'">'+STATE_CHIP[r.state][1]+'</span>'
+      +(running?'<span class="chip warn" id="rd-lease">租约 04:37</span>':'')
+      +(r.outcome?'<span class="chip '+OUTCOME_CHIP[r.outcome][0]+'">'
+        +OUTCOME_CHIP[r.outcome][1]+'</span>':'')
+      +'<span class="chip" title="operator 会话流 = log tail（<state>/executions/<id>.log）——即既有轮日志（spawn-log）绑定档">会话流 · 轮日志</span>'
+      +'</div><div class="small mut" style="margin-top:6px">来源：'
+      +({alert:'告警',cp_event:'CP 事件',watchdog:'watchdog',manual:'手动'})[s.source]
+      +(r.note?' · 手动说明见台账行':'')+'</div></div></div>'
+      +'<div class="rd-cols"><section class="card">'
+      +'<div class="rdh2">执行过程 · '+(running?'实时刷新':'回放')
+      +'（思考/工具/回答全量平铺，不打标签；思考折叠）</div>'
+      +'<div class="small mut" style="text-align:right;margin-bottom:6px" id="rd-stat"></div>'
+      +'<div id="run-stream">'+sess.map(rdRow).join('')+'</div></section>'
+      +'<aside><div class="card" style="margin-bottom:14px">'
+      +'<div class="rdh2">控制面时间线（operator Store events，确定性事实）</div>'+rdTl(tl)+'</div>'
+      +'<div class="card"><div class="rdh2">证据（evidence）</div>'+rdEvid(evid)+'</div></aside></div>';
+    if(running){
+      let i=0;const box=$('#run-stream');
+      const step=()=>{if(i>=LIVE_SCRIPT.length){stopLive();
+          $('#rd-stat').textContent='已渲染 '+i+' 条 · 流已结束（保留现场，可回看）';return}
+        box.insertAdjacentHTML('beforeend',rdRow({st:LIVE_SCRIPT[i][0],tx:LIVE_SCRIPT[i][1]}));
+        i++;box.scrollTop=box.scrollHeight;
+        $('#rd-stat').textContent='已渲染 '+i+' 条 · 增量拉取中…'};
+      step();liveTimer=setInterval(step,1800);
+      let lease=277;
+      window.__leaseTimer=setInterval(()=>{const c=$('#rd-lease');
+        if(!c){clearInterval(window.__leaseTimer);window.__leaseTimer=null;return}
+        lease=Math.max(0,lease-1);
+        c.textContent=lease?'租约 '+String(Math.floor(lease/60)).padStart(2,'0')+':'
+          +String(lease%60).padStart(2,'0'):'租约已过期 · 等待收回';
+        if(!lease){clearInterval(window.__leaseTimer);window.__leaseTimer=null}},1000);
+    }
+  }else{
+    // 循环轮：同一组件换数据（证明 operator 轮与循环轮进的是同一个 view=run）
+    const fake=HIST.find(x=>x.id===exec)||{id:exec,loop:'review_round',project:'mocx__skills',
+      title:'循环轮执行',state:'RUNNING',agent:'claude',at:'09-30 16:58'};
+    const sc=STATE_CHIP[fake.state]||STATE_CHIP.RUNNING;
+    d.innerHTML=rdCrumbs('执行历史','history.back()','#view=run&exec='+fake.id.slice(0,12)+'…')
+      +'<div class="card rd-head"><div class="title">'
+      +'<div class="rd-h1"><span class="n">#285</span>'+esc(fake.title)+'</div>'
+      +'<div class="rd-meta"><span><b>'+esc(fake.project)+'</b></span>'
+      +'<span>worker <b>@DESKTOP-MOCX/reviewer</b></span>'
+      +'<span class="chip acc mono">fix/mocx/pr-review-fix</span>'
+      +'<span class="mono">'+fake.at+'</span></div></div>'
+      +'<div class="rd-right"><div class="rd-chips">'
+      +'<span class="statechip '+sc[0]+'">'+sc[1]+'</span>'
+      +'<span class="chip" title="执行流按 prompt 内 execution id 精确绑定会话文件">会话流 · 精确绑定</span>'
+      +'</div></div></div>'
+      +'<div class="rd-cols"><section class="card">'
+      +'<div class="rdh2">执行过程（思考/工具/回答全量平铺）</div>'
+      +'<div id="run-stream">'
+      +[{st:'text',tx:'读取 reviewer.md 规则文档，进入 §2 评审流。'},
+        {st:'tool',tx:'$ gitea view 285',out:'标题  fix(cp): PR_REVIEW_FIX 允许起点=PR head 的临时修复分支…'},
+        {st:'think',tx:'diff 集中在 publish target remap，考题文件未触碰。按 §2 逐项核对判据后出判词。'},
+        {st:'tool',tx:'$ python .agents/loops/verify_skill.py',out:'static: ok · tests: 0 fail'},
+        {st:'text',tx:'（循环轮会话流——既有功能；operator 轮与本页同一个组件）'}]
+        .map(rdRow).join('')+'</div></section>'
+      +'<aside><div class="card" style="margin-bottom:14px">'
+      +'<div class="rdh2">控制面时间线（CP events）</div>'
+      +rdTl([['16:58:01','execution.claimed',RUN_TL.loop.claimed,1],
+             ['16:58:03','worktree 检出',RUN_TL.loop.worktree,1],
+             ['16:58:05','bind',RUN_TL.loop.bind,1]])+'</div>'
+      +'<div class="card"><div class="rdh2">证据（evidence）</div>'
+      +rdEvid([['verification','ok','verify_skill.py PASS · 0 fail'],
+               ['judgment','acc','（进行中）']])+'</div></aside></div>';
+  }
+}
+
+// ===================== 干预台账 =====================
+let opF={oc:'all'};
+function renderOps(){
+  const fs=$('#op-src').value,fp=$('#op-proj').value,q=$('#op-q').value.trim();
+  let n=0;
+  $('#op-rows').innerHTML=OPS.filter(r=>{
+    if(fs!=='all'&&r.signal.source!==fs)return false;
+    if(fp==='none'&&r.signal.org_repo!=='')return false;
+    if(fp!=='all'&&fp!=='none'&&r.signal.org_repo!==fp)return false;
+    if(opF.oc!=='all'&&ocKey(r)!==opF.oc)return false;
+    if(q&&!(r.signal.kind+' '+r.signal.message+' '+(r.diagnosis||'')+' '
+      +(r.actions||[]).map(a=>a.verb+' '+a.target).join(' ')).includes(q))return false;
+    return true;}).map(r=>{
+    n++;const s=r.signal;
+    return '<tr data-id="'+esc(r.id)+'" style="cursor:pointer">'
+     +'<td class="num small mut">'+r.started_at+'<br><span style="opacity:.75">'+dur(r.duration_s)+'</span></td>'
+     +'<td><span class="chip '+({alert:'acc',cp_event:'warn',watchdog:'mut',manual:'mut'})[s.source]
+       +'" style="text-transform:none">'+({alert:'告警',cp_event:'CP 事件',watchdog:'watchdog',manual:'手动'})[s.source]+'</span></td>'
+     +'<td class="sig"><div class="k2">'+esc(s.kind)+(s.org_repo?' <span class="org2">· '+esc(s.org_repo)+'</span>'
+       :' <span class="org2">· 机器全局</span>')+'</div>'
+       +'<div class="msg2" title="'+esc(s.message)+'">'+esc(s.message)+'</div>'
+       +(r.diagnosis?'<div class="diag2" style="margin-top:.15rem">'+esc(r.diagnosis)+'</div>':'')
+       +(r.note?'<div class="diag2 note2">手动说明：'+esc(r.note)+'</div>':'')+'</td>'
+     +'<td>'+((r.actions||[]).map(a=>'<span class="act'+(a.verb==='escalate_human'?' human'
+       :a.verb==='no_op'?' noop':'')+'">'+esc(a.verb)+(a.target&&a.target!=='—'?' · '+esc(a.target):'')+'</span>').join('')
+       +(r.evidence||[]).map(e=>'<a class="ev2">'+esc(e.ref)+'</a>').join('')
+       ||'<span class="small mut">—</span>')+'</td>'
+     +'<td>'+ocHtml(ocKey(r))+'</td>'
+     +'<td class="small mut">'+esc(r.agent)+(r.model?'<br>'+esc(r.model):'')+'</td></tr>';
+  }).join('');
+  $('#op-cnt').textContent='共 '+n+' 条（演示数据）';
+  $$('#op-rows tr').forEach(tr=>tr.onclick=e=>{
+    if(e.target.closest('a'))return;goRun(tr.dataset.id)});
+}
+$$('#view-operator .fchip').forEach(c=>c.onclick=()=>{
+  $$('#view-operator .fchip').forEach(x=>x.classList.remove('on'));
+  c.classList.add('on');opF.oc=c.dataset.oc;renderOps()});
+$('#op-src').onchange=renderOps;$('#op-proj').onchange=renderOps;$('#op-q').oninput=renderOps;
+
+// ===================== 项目（简化） =====================
+$('#project-cards').innerHTML=[
+ {n:'mocx__skills',s:['Issue 14 open','PR 3 open','采集 2m 前'],chips:[['ok','已启用'],['mut','remote']]},
+ {n:'yilian__ai_vector',s:['Issue 9 open','PR 1 open','采集 2m 前'],chips:[['ok','已启用'],['mut','remote']]},
+ {n:'yilian__ai_quality_analysis',s:['Issue 4 open','PR 0 open','采集 3m 前'],chips:[['ok','已启用'],['mut','单机']]}]
+ .map(p=>'<div class="card"><div class="t">'+esc(p.n)+'</div><div class="s">'
+  +p.s.map(x=>'<span>'+esc(x)+'</span>').join('')+'</div><div style="margin-top:.3rem">'
+  +p.chips.map(c=>'<span class="chip '+c[0]+'">'+esc(c[1])+'</span>').join('')+'</div></div>').join('');
+
+// ===================== Issue/PR 流水（简化） =====================
+const FUNNEL=[['发现（30d）',12],['开发中',3],['待评审',3],['审核中',1],['待人工',2],['已合并（30d）',9]];
+$('#flow-strip').innerHTML=FUNNEL.map((f,i)=>'<div class="funnel-row"><strong>'+esc(f[0])+'</strong>'
+  +'<span style="flex:1;height:10px;border-radius:5px;background:linear-gradient(90deg,'
+  +'rgba(14,116,144,.55) '+Math.round(f[1]/12*100)+'%,rgba(22,35,46,.06) '+Math.round(f[1]/12*100)+'%)"></span>'
+  +'<b class="num">'+f[1]+'</b></div>').join('');
+function miniTable(head,rows){
+  return '<div class="card" style="padding:0;overflow:hidden"><table class="table mb-0"><thead><tr>'
+   +head.map(h=>'<th>'+esc(h)+'</th>').join('')+'</tr></thead><tbody>'
+   +rows.map(r=>'<tr>'+r.map(c=>'<td>'+c+'</td>').join('')+'</tr>').join('')+'</tbody></table></div>'}
+$('#pr-table').innerHTML=miniTable(['#','标题','分支','状态','更新'],
+ [['<span class="mono">285</span>','PR_REVIEW_FIX 临时修复分支 publish 推回原分支','<span class="mono">fix/mocx/pr-review-fix</span>','<span class="chip ok">可合并</span>','3h'],
+  ['<span class="mono">284</span>','blocked-escalation 收紧判据','<span class="mono">feature/mocx/blocked-escalation</span>','<span class="chip acc">审核中</span>','2h'],
+  ['<span class="mono">287</span>','考题 verification_fast 兼容','<span class="mono">feature/mocx/exam-keys</span>','<span class="chip err">base-defect</span>','6h'],
+  ['<span class="mono">288</span>','dash 告警深链整理','<span class="mono">feature/mocx/alert-links</span>','<span class="chip ok">可合并</span>','8h']]);
+$('#issue-table').innerHTML=miniTable(['#','标题','标签','等待'],
+ [['<span class="mono">306</span>','[❓needs-human] base-defect 修复方案 <span class="chip mut" style="margin-left:.4rem">operator 升级</span>','<span class="chip warn">待决策</span>','2h'],
+  ['<span class="mono">307</span>','handler 队列卡死恢复复盘','<span class="chip mut">open</span>','5h'],
+  ['<span class="mono">310</span>','reviewer 槽位上限调优（ai_vector）','<span class="chip mut">open</span>','1d']]);
+
+// ===================== 循环（机器卡 = operator 触发入口之一） =====================
+$('#machines').innerHTML=
+ '<div class="card"><div class="t">DESKTOP-MOCX（serve 主机）</div>'
++'<div class="s"><span>last_seen 刚刚</span><span>loops: discover/handler/reviewer</span></div>'
++'<div style="margin-top:.3rem"><span class="chip ok">在线</span><span class="chip acc">operator 执行位</span>'
++'<span class="chip ok">健康</span></div></div>'
++'<div class="card"><div class="t">GPU-02</div>'
++'<div class="s"><span>last_seen 07:58</span><span>loops: reviewer</span></div>'
++'<div style="margin-top:.3rem"><span class="chip ok">在线</span>'
++'<span class="chip warn" title="静默开始前已有 READY 工作在等">应动未动 · reviewer</span></div>'
++'<div style="margin-top:.5rem"><button class="btn btn-sm btn-outline-primary" onclick="rtOpen()">触发巡检</button>'
++' <span class="small mut">（operator 手动触发入口之一）</span></div></div>';
+$('#loop-cards').innerHTML=[
+ {n:'discover',s:['上轮 09:58 · 成功','下一轮 12:58'],chip:['ok','正常']},
+ {n:'handler',s:['上轮 10:40 · 成功','处理中 2'],chip:['acc','运行中']},
+ {n:'reviewer',s:['上轮 08:44 · 成功','READY 等待 2'],chip:['warn','应动未动']}]
+ .map(l=>'<div class="card"><div class="t">'+l.n+'</div><div class="s">'
+  +l.s.map(x=>'<span>'+esc(x)+'</span>').join('')+'</div>'
+  +'<div style="margin-top:.3rem"><span class="chip '+l.chip[0]+'">'+esc(l.chip[1])+'</span></div></div>').join('');
+$('#runtime').innerHTML='<div class="t">mocx__skills · CP 运行时</div><div class="s" style="margin-top:.3rem">'
+ +'<span>slots: max_parallel=3 · 占用 1</span><span>expired=0</span><span>outbox 未决 0</span>'
+ +'<span>policy 版本 v17</span></div>';
+
+// ===================== 趋势（简化） =====================
+$('#cycle-cards').innerHTML=[
+ {n:'24h 轮次',v:'41',c:'ok'},{n:'成功率',v:'90.2%',c:'ok'},
+ {n:'median 时长',v:'7m02s',c:'mut'},{n:'operator 巡检',v:'8',c:'acc'}]
+ .map(k=>'<div class="card kpi"><div class="t">'+k.n+' <small>'+k.v+'</small></div></div>').join('');
+$('#chart-legend').innerHTML=[['discover','var(--acc)'],['handler','var(--ok)'],['reviewer','#4f46e5']]
+ .map(l=>'<span><i style="background:'+l[1]+'"></i>'+l[0]+'</span>').join('');
+(function(){
+  const series=[{c:'var(--acc)',d:'M0,150 60,138 120,142 180,120 240,128 300,108 360,116 420,96 480,104 540,84 600,90'},
+    {c:'var(--ok)',d:'M0,168 60,160 120,166 180,150 240,156 300,140 360,148 420,130 480,136 540,120 600,126'},
+    {c:'#4f46e5',d:'M0,182 60,178 120,180 180,170 240,174 300,162 360,168 420,152 480,158 540,144 600,150'}];
+  $('#chart').innerHTML=series.map(s=>'<path d="'+s.d+'" fill="none" stroke="'+s.c+'" stroke-width="2"/>').join('')
+    +'<line x1="0" y1="195" x2="600" y2="195" stroke="rgba(22,35,46,.15)"/>';
+})();
+
+// ===================== 活动（含 operator.act 审计） =====================
+const EVS=[
+ ['16:58','execution.claimed','mocx__skills · review:285（reviewer）','acc'],
+ ['16:55','command.enqueued','operator_round · loop_stall 信号（yilian__ai_vector）','mut'],
+ ['16:52','publication.sent','PR #285 评论（reviewer 判词 Approved）','mut'],
+ ['16:44','operator.report','loop_stall 巡检 → RESOLVED（command_resend repair:617）','acc'],
+ ['16:42','command.enqueued','repair_round #617（operator 重发）','mut'],
+ ['15:29','operator.act','gitea_create_issue → #308（GPU-02 僵尸槽位复发）','acc'],
+ ['15:10','execution.claimed','operator:5c1e77a2（operator · sweep_expired +3）','mut'],
+ ['11:20','operator.act','escalate_human → #306 [❓needs-human]（base-defect）','acc'],
+ ['07:12','watchdog','拉起 code-loop-cp-serve（8712 探活失败）','warn']];
+const DAYS=['09-24','09-25','09-26','09-27','09-28','09-29','09-30'];
+$('#ev-bar').innerHTML=DAYS.map((d,i)=>{
+  const h=18+((i*29)%52);
+  return '<i style="flex:1;height:'+h+'px;background:'+((i===6)?'var(--acc)':'rgba(22,35,46,.16)')
+    +'" title="'+d+'：'+(3+i%5)+' 条"></i>';}).join('');
+$('#ev-total').textContent='近 7 天 31 条';
+$('#ev-list').innerHTML='<div class="card" style="padding:.4rem .9rem">'
+ +EVS.map(e=>'<div class="ev-row"><span class="t mono">'+e[0]+'</span>'
+   +'<span class="chip '+e[3]+'" style="flex:0 0 9.5rem">'+esc(e[1])+'</span>'
+   +'<span class="note" title="'+esc(e[2])+'">'+esc(e[2])+'</span></div>').join('')+'</div>';
+
+// ===================== 手动触发对话框（rt-* 真实类名） =====================
+const GENERIC_ICON='<svg class="rt-ic" viewBox="0 0 24 24" fill="none" aria-hidden="true">'
+ +'<rect x="2.5" y="4.5" width="19" height="15" rx="3" stroke="#5b6b78" stroke-width="1.6"/>'
+ +'<path d="M7 9.5l3 2.5-3 2.5" stroke="#5b6b78" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>'
+ +'<path d="M12.5 15H17" stroke="#5b6b78" stroke-width="1.6" stroke-linecap="round"/></svg>';
+const ICONS={
+ '':GENERIC_ICON,
+ claude:'<svg class="rt-ic" viewBox="0 0 24 24" aria-hidden="true"><path fill="#D97757" d="m4.7144 15.9555 4.7174-2.6471.079-.2307-.079-.1275h-.2307l-.7893-.0486-2.6956-.0729-2.3375-.0971-2.2646-.1214-.5707-.1215-.5343-.7042.0546-.3522.4797-.3218.686.0608 1.5179.1032 2.2767.1578 1.6514.0972 2.4468.255h.3886l.0546-.1579-.1336-.0971-.1032-.0972L6.973 9.8356l-2.55-1.6879-1.3356-.9714-.7225-.4918-.3643-.4614-.1578-1.0078.6557-.7225.8803.0607.2246.0607.8925.686 1.9064 1.4754 2.4893 1.8336.3643.3035.1457-.1032.0182-.0728-.164-.2733-1.3539-2.4467-1.445-2.4893-.6435-1.032-.17-.6194c-.0607-.255-.1032-.4674-.1032-.7285L6.287.1335 6.6997 0l.9957.1336.419.3642.6192 1.4147 1.0018 2.2282 1.5543 3.0296.4553.8985.2429.8318.091.255h.1579v-.1457l.1275-1.706.2368-2.0947.2307-2.6957.0789-.7589.3764-.9107.7468-.4918.5828.2793.4797.686-.0668.4433-.2853 1.8517-.5586 2.9021-.3643 1.9429h.2125l.2429-.2429.9835-1.3053 1.6514-2.0643.7286-.8196.85-.9046.5464-.4311h1.0321l.759 1.1293-.34 1.1657-1.0625 1.3478-.8804 1.1414-1.2628 1.7-.7893 1.36.0729.1093.1882-.0183 2.8535-.607 1.5421-.2794 1.8396-.3157.8318.3886.091.3946-.3278.8075-1.967.4857-2.3072.4614-3.4364.8136-.0425.0304.0486.0607 1.5482.1457.6618.0364h1.621l3.0175.2247.7892.522.4736.6376-.079.4857-1.2142.6193-1.6393-.3886-3.825-.9107-1.3113-.3279h-.1822v.1093l1.0929 1.0686 2.0035 1.8092 2.5075 2.3314.1275.5768-.3218.4554-.34-.0486-2.2039-1.6575-.85-.7468-1.9246-1.621h-.1275v.17l.4432.6496 2.3436 3.5214.1214 1.0807-.17.3521-.6071.2125-.6679-.1214-1.3721-1.9246L14.38 17.959l-1.1414-1.9428-.1397.079-.674 7.2552-.3156.3703-.7286.2793-.6071-.4614-.3218-.7468.3218-1.4753.3886-1.9246.3157-1.53.2853-1.9004.17-.6314-.0121-.0425-.1397.0182-1.4328 1.9672-2.1796 2.9446-1.7243 1.8456-.4128.164-.7164-.3704.0667-.6618.4008-.5889 2.386-3.0357 1.4389-1.882.929-1.0868-.0062-.1579h-.0546l-6.3385 4.1164-1.1293.1457-.4857-.4554.0608-.7467.2307-.2429 1.9064-1.3114Z"/></svg>',
+ opencode:'<svg class="rt-ic" viewBox="0 0 512 512" aria-hidden="true"><rect width="512" height="512" rx="110" fill="#131010"/><path d="M320 224V352H192V224H320Z" fill="#5A5858"/><path fill-rule="evenodd" clip-rule="evenodd" d="M384 416H128V96H384V416ZM320 160H192V352H320V160Z" fill="#fff"/></svg>'};
+const SRV={
+ on:{options:{enabled:true,default_agent:'claude',default_model:null,
+   agents:[{id:'claude',label:'claude',sub:'Claude Code',models:null},
+     {id:'opencode',label:'opencode',sub:'开源 agent',models:['kimi-for-coding/k3','opencode/big-pickle']},
+     {id:'pi',label:'pi',sub:'pi coding agent',models:['selfhost/deepseek-v4-flash-0731-self']}],
+   scope:{kind:'serve-host'}}},
+ off:{options:{enabled:false,default_agent:null,default_model:null,agents:[],scope:null}}};
+let srv='on',rtCache=null;
+function setSrv(next){
+  srv=next;rtCache=null;
+  ['on','off'].forEach(k=>$('#sw-'+k).classList.toggle('on',k===next));
+  $('#op-trigger-btn').disabled=next==='off';
+  $('#op-trigger-btn').title=next==='off'?'operator 未启用（503）':'';
+}
+$('#sw-on').onclick=()=>setSrv('on');$('#sw-off').onclick=()=>setSrv('off');
+$('#op-trigger-btn').onclick=()=>rtOpen();
+async function rtLoad(){
+  if(rtCache)return rtCache;
+  await new Promise(r=>setTimeout(r,250));
+  rtCache=SRV[srv].options;return rtCache;
+}
+function rtCard(a,title){
+  return '<button type="button" class="rt-agcard" role="radio" aria-checked="false" data-agent="'
+    +esc(a.id)+'" title="'+esc(title)+'">'+(ICONS[a.id]||GENERIC_ICON)+esc(a.label)
+    +'<span class="rt-sub">'+esc(a.sub)+'</span></button>'}
+function rtPaintAgents(list){
+  $('#rt-agents').innerHTML=list.map(a=>rtCard(a,
+    a.id===''?'使用机器配置 operator.agent（未配置 = 该机注册的 spawn 命令缺省）'
+    :(a.models===null?a.label+'（模型走注册缺省）':a.label+'（模型可下拉选择）'))).join('');
+  $$('#rt-agents .rt-agcard').forEach(c=>c.addEventListener('click',()=>{
+    $$('#rt-agents .rt-agcard').forEach(x=>x.setAttribute('aria-checked',x===c?'true':'false'));
+    rtAgentChange();}));
+}
+function rtPaintScope(scope,def){
+  const el=$('#rt-scope');
+  if(!scope){el.style.display='none';return}
+  el.style.display='block';el.className='rt-scope';
+  // operator 语义：serve-host 即真实范围（协调轮恒在面板服务主机执行与查证）——中性色，非 review 对话框的警示回退
+  el.innerHTML='<span class="dot"></span>协调轮恒在面板服务主机执行（本机库/日志/loopback）'
+    +'——serve-host 即真实范围，非降级 · 默认 '+esc(def||'（未配置）');
+}
+function rtOpen(){
+  $('#rt-bd').classList.add('open');
+  $('#rt-model-field').style.display='none';
+  $('#rt-scope').style.display='none';
+  $('#rt-agents').innerHTML='<div class="rt-loading">检测协调 agent…</div>';
+  $('#rt-hint').textContent='';$('#rt-hint').className='rt-hint';
+  rtLoad().then(opts=>{
+    let list;
+    if(opts.default_agent){
+      const d=opts.agents.find(a=>a.id===opts.default_agent)||{id:opts.default_agent,
+        label:opts.default_agent,sub:'机器配置默认',models:null};
+      list=[d].concat(opts.agents.filter(a=>a.id!==opts.default_agent));
+    }else list=[{id:'',label:'默认',sub:'机器配置'}].concat(opts.agents);
+    rtPaintAgents(list);
+    const pre=opts.default_agent||'';
+    $$('#rt-agents .rt-agcard').forEach(c=>c.setAttribute('aria-checked',c.dataset.agent===pre?'true':'false'));
+    rtPaintScope(opts.scope,opts.default_agent);
+    rtAgentChange();
+  });
+}
+function rtClose(){$('#rt-bd').classList.remove('open')}
+function rtAgentChange(){
+  const checked=$('#rt-agents .rt-agcard[aria-checked="true"]');
+  const agent=checked?checked.dataset.agent:'';
+  const field=$('#rt-model-field'),sel=$('#rt-model'),st=$('#rt-model-state');
+  if(!agent){field.style.display='none';return}
+  field.style.display='block';
+  const row=((rtCache||{}).agents||[]).find(a=>a.id===agent);
+  if(!row){field.style.display='none';return}
+  if(row.models===null){sel.innerHTML='<option value="">默认（注册缺省）</option>';
+    sel.disabled=true;st.textContent='';return}
+  if(!row.models.length){sel.innerHTML='<option value="">默认</option>';sel.disabled=true;
+    st.textContent='（检测失败或未装 '+row.label+'）';return}
+  sel.innerHTML='<option value="">默认（'+esc(row.label)+' 自身配置）</option>'
+    +row.models.map(m=>'<option value="'+esc(m)+'">'+esc(m)+'</option>').join('');
+  sel.disabled=false;st.textContent='';
+}
+$('#rt-note').addEventListener('input',e=>{$('#rt-note-cnt').textContent=e.target.value.length});
+function rtConfirm(){
+  const card=$('#rt-agents .rt-agcard[aria-checked="true"]');
+  const agent=card?card.dataset.agent:'';
+  const model=$('#rt-model').value,note=$('#rt-note').value.trim();
+  const body={};if(agent)body.agent=agent;if(agent&&model)body.model=model;if(note)body.note=note;
+  const hint=$('#rt-hint');
+  if(srv==='off'){hint.className='rt-hint rt-warn';
+    hint.textContent='503 OPERATOR_DISABLED——在 ~/.code-loop/dashboard.json operator.enabled 开启后可用';return}
+  hint.className='rt-hint';
+  hint.textContent='POST /api/operator/trigger '+JSON.stringify(body)
+    +' → 手动触发绕过冷却/日额，仍受同信号单轮去重';
+  const go=$('#rt-go');go.disabled=true;go.textContent='下发中…';
+  setTimeout(()=>{
+    rtClose();go.disabled=false;go.textContent='开始巡检';
+    const tb=$('#op-trigger-btn');tb.disabled=true;tb.textContent='已派发 ✓';
+    setTimeout(()=>{tb.textContent='巡检运行中 ✓'},900);
+    setTimeout(()=>{tb.textContent='手动触发协调巡检';tb.disabled=false},2600);
+  },600);
+}
+document.addEventListener('keydown',e=>{if(e.key==='Escape')rtClose()});
+
+// ===================== 顶栏杂项 =====================
+// ===== 2026-10-10 增量（issue #314/#315，待确认）：采集异步单飞三态 =====
+// 点击立即返回（模拟后台采集 2.5s）；采集中重复点击并入同一轮（单飞 skipped）。
+// 实现契约：POST /api/collect → {started|skipped}；前端轮询 GET /api/collect/status 到 !running 再 refresh。
+let COLLECTING=false;
+$('#collect-btn').onclick=function(){
+  if(COLLECTING)return;
+  COLLECTING=true;this.disabled=true;
+  this.innerHTML='<span class="spinner-border spinner-border-sm" aria-hidden="true"></span> 已提交 · 采集中…';
+  $('#fresh').textContent='后台采集中…（页面交互不受影响）';
+  setTimeout(()=>{COLLECTING=false;this.disabled=false;this.textContent='立即采集';tickFresh()},2500);};
+function tickFresh(){const t=new Date().toLocaleTimeString('zh-CN',{hour12:false});
+  $('#fresh').textContent='更新于 '+t+' · 60s 自动刷新（演示）'}
+tickFresh();setInterval(tickFresh,5000);
+$('#proj-filter').onchange=()=>{renderOps();renderHist()};
+
+// ===================== 启动 =====================
+if(!location.hash)location.hash='view=kanban';
+applyHash();renderHist();renderOps();
+</script>
+</body>
+</html>

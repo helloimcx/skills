@@ -46,10 +46,29 @@ Skills are installed by copying folders directly to `~/.claude/skills/`.
 - **输出**: 中文技术文档，必要时调用 d2-diagrams skill 生成可视化图表
 - **文件**: `github-arch-analyzer/SKILL.md`
 
+### code-loop
+- **目录**: `code-loop/`
+- **功能**: 本地确定性自动化研发闭环（Control Plane 协调器、GitHub 审查与合并调度、门禁修复、Operator 监控自治与 Dashboard）
+- **文件**: `code-loop/SKILL.md`
+- **参考契约**: `code-loop/references/`（`control-plane.md`、`reviewer.md`、`handler.md`、`discover.md`、`operator.md`）
+- **委托 CLI**: `code-loop/scripts/`（`control_plane.py`、`dashboard.py`、`trigger.py`、`cp_server.py`、`worker_agent.py`、`operator.py`、`check_ledger.py`）
+
 
 ### d2 (D2 Diagramming)
 - **目录**: `d2/`
 - **功能**: D2 图表绘制工具 - 流程图、架构图、UML 类图、ERD、序列图
+
+## Integrated Services
+
+### code-loop
+- **目录**: `services/code-loop/`
+- **功能**: 本地确定性运行时与自动化评审调度系统（纯 Python 3.9+ 标准库与 SQLite，零外部依赖）
+- **架构与模块**:
+  - `codeloop/cp/`: Control Plane 协调器核心（状态空间、租约控制、原子转移、考题护栏）
+  - `codeloop/cp/github.py`: 原生 GitHub REST API (v2022-11-28) 适配器，支持 `GITHUB_TOKEN`、Bearer 认证、`gh` CLI 与 `codeloop.cp.gitea` 向后兼容别名
+  - `codeloop/dash/` & `frontend/`: 监控面板后台与纯静态前端（实时会话流、行动卡片、决策回复）
+  - `scripts/cp_server.py`: 合并服务（8722 协调面 + 127.0.0.1:8712 面板 UI）
+  - `scripts/worker_agent.py`: 常驻 Worker Agent（RFC6455 WebSocket 指令通道）
 
 ## D2 Skill Architecture
 

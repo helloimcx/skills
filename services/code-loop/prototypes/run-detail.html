@@ -1,0 +1,480 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>原型 · 运行详情（审核中） · code-loop dashboard</title>
+<!--
+  高保真原型（假数据，无构建依赖，浏览器直接打开）。
+  对应需求：看板手动触发的代码审核，卡片进入【审核中】列后，点击卡片跳转本页，
+  实时查看该轮评审的运行过程——等于 Claude 运行过程的完整回放：
+  思考、工具调用、回答的内容全部按时间顺序平铺显示，不贴标签、不过滤、不分类；
+  控制面时间线作右侧兜底。契约见页面底部「接口契约速览」，实现须与本页交互一致。
+
+  2026-09-18 更新：runBindChip 绑定来源矩阵——exact / spawn-log（新增「轮日志」chip 分支：本机
+  spawn 的 opencode 等非 claude 轮没有 transcript，会话流解析自轮日志）/ window / reported / null，
+  五种来源同一平铺回放，界面上只有 chip 不同。
+
+  2026-09-21 更新：新增「子代理执行」变体（执行历史列表的 agent 行点击进入本页，复用同一组件）——
+  bind 矩阵加第六档 agent-session（子会话直读：zcode 子会话 parts / claude 子代理 transcript）；
+  头部换子代理元数据（任务提示词、平台 chip、父会话指针；无 PR/分支/租约），时间线=档案派生事件，
+  证据区=原始凭证指针。契约：GET /api/run 的 exec 参数接受两类 id（32hex 执行 id | 平台:会话id）。
+-->
+<style>
+:root{
+  --paper:#f4f6f8; --card:#ffffff; --ink:#16232e; --mut:#5c6b78;
+  --line:#dfe5ea; --acc:#0e7490; --acc-soft:#e8f3f6;
+  --ok:#15803d; --ok-soft:#e8f4ec; --err:#dc2626; --err-soft:#fdeaea;
+  --warn:#b45309; --warn-soft:#fdf3e4;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--ink);
+  font:14px/1.55 system-ui,-apple-system,"Segoe UI","Noto Sans SC",sans-serif}
+a{color:var(--acc);text-decoration:none}
+a:hover{text-decoration:underline}
+.wrap{max-width:1180px;margin:0 auto;padding:18px 20px 60px}
+h1{font-size:17px;margin:0}
+h2{font-size:13px;margin:0 0 8px;color:var(--mut);font-weight:600;letter-spacing:.02em}
+.mono{font-family:var(--mono);font-size:12px}
+.mut{color:var(--mut)}
+.chip{display:inline-block;padding:1px 8px;border-radius:999px;font-size:12px;
+  border:1px solid var(--line);background:var(--card);white-space:nowrap}
+.chip.ok{background:var(--ok-soft);color:var(--ok);border-color:transparent}
+.chip.warn{background:var(--warn-soft);color:var(--warn);border-color:transparent}
+.chip.acc{background:var(--acc-soft);color:var(--acc);border-color:transparent}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 16px}
+
+/* 面包屑 + 入口演示 */
+.crumbs{display:flex;gap:8px;align-items:center;margin-bottom:12px;font-size:13px}
+.demo-card{margin:0 0 14px;padding:10px 14px}
+.qcard{border:1px solid var(--line);border-radius:8px;background:var(--card);
+  padding:10px 12px;max-width:420px;cursor:pointer;transition:box-shadow .15s}
+.qcard:hover{box-shadow:0 2px 8px rgba(14,116,144,.15)}
+.qcard .t{font-weight:600;margin-bottom:4px}
+.qcard .m{display:flex;gap:10px;flex-wrap:wrap;font-size:12px;color:var(--mut)}
+
+/* 头部卡 */
+header.card{display:flex;flex-wrap:wrap;gap:8px 18px;align-items:baseline;margin-bottom:14px}
+header .title{flex:1 1 380px;min-width:300px}
+header .title .n{font-family:var(--mono);color:var(--acc);margin-right:6px}
+.meta{display:flex;gap:6px 14px;flex-wrap:wrap;font-size:12.5px;color:var(--mut);align-items:center}
+.meta b{color:var(--ink);font-weight:600}
+.statechip{font-size:12px;padding:2px 10px;border-radius:999px;font-weight:600}
+.state-RUNNING{background:var(--acc-soft);color:var(--acc)}
+.state-SUCCEEDED{background:var(--ok-soft);color:var(--ok)}
+.state-FAILED{background:var(--err-soft);color:var(--err)}
+
+/* 主体两栏 */
+.cols{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:14px;align-items:start}
+@media (max-width:900px){.cols{grid-template-columns:1fr}}
+
+/* 执行过程：Claude 运行全量回放，平铺不分类 */
+.stream-head{display:flex;gap:8px;align-items:center;margin-bottom:10px}
+.stream{position:relative}
+#feed{height:520px;overflow-y:auto;border:1px solid var(--line);border-radius:8px;
+  background:#fbfcfd;padding:8px 0;scroll-behavior:auto}
+.ev{padding:6px 14px;border-bottom:1px dashed #eef1f4;display:flex;gap:10px}
+.ev:last-child{border-bottom:none}
+.ev .tm{font-family:var(--mono);font-size:11px;color:#9aa7b1;flex:none;padding-top:2px}
+.ev .txt{min-width:0;flex:1;white-space:pre-wrap;word-break:break-word;font-size:13px}
+.ev.think .txt{color:#5c6b78}                     /* 思考：灰，不加标签 */
+.ev.tool .txt{font-family:var(--mono);font-size:12px;color:#33424e}  /* 工具：等宽 */
+.ev .out{margin-top:4px;font-family:var(--mono);font-size:12px;color:#5c6b78;
+  background:#f2f5f7;border:1px solid var(--line);border-radius:6px;
+  padding:5px 8px;max-height:130px;overflow-y:auto}
+/* 思考折叠：默认只留一行预览，点击展开；展开后内部可滚 */
+.ev .fold summary{cursor:pointer;list-style:none;color:#5c6b78;font-size:12.5px;user-select:none}
+.ev .fold summary::-webkit-details-marker{display:none}
+.ev .fold summary::before{content:'▸ '}
+.ev .fold[open] summary::before{content:'▾ '}
+.ev .fold summary:hover{color:var(--acc)}
+.ev .fold .full{margin-top:4px;max-height:300px;overflow-y:auto}
+.ev.err .txt,.ev.err .tm{color:var(--err)}
+.ev.err .out{background:var(--err-soft);border-color:#f5c6c6;color:#8f1f1f}
+#bottom-pill{position:absolute;right:18px;bottom:18px;display:none}
+.pill{border:1px solid var(--acc);background:var(--acc);color:#fff;border-radius:999px;
+  padding:4px 14px;font-size:12.5px;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.18)}
+
+/* 时间线 */
+.tl{list-style:none;margin:0;padding:0}
+.tl li{position:relative;padding:0 0 14px 20px;border-left:2px solid var(--line);
+  margin-left:6px}
+.tl li:last-child{padding-bottom:2px}
+.tl li::before{content:'';position:absolute;left:-6px;top:3px;width:10px;height:10px;
+  border-radius:50%;background:var(--card);border:2px solid var(--acc)}
+.tl li.done::before{background:var(--acc)}
+.tl .k{font-weight:600;font-size:13px}
+.tl .d{font-size:12px;color:var(--mut);font-family:var(--mono)}
+.tl .tm{font-size:11px;color:#9aa7b1;font-family:var(--mono)}
+
+/* 状态演示条 */
+.demo-bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:18px 0 8px}
+.fbtn{border:1px solid var(--line);background:var(--card);border-radius:999px;
+  padding:2px 12px;font-size:12.5px;cursor:pointer;color:var(--mut)}
+.fbtn.on{background:var(--acc-soft);color:var(--acc);border-color:var(--acc);font-weight:600}
+.contract{margin-top:26px}
+.contract pre{background:#fbfcfd;border:1px solid var(--line);border-radius:8px;
+  padding:10px 12px;font-size:12px;overflow:auto}
+footer{margin-top:26px;font-size:12px;color:var(--mut)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="crumbs">
+    <a href="#" onclick="return false" title="原型内无真实看板">← 返回看板</a>
+    <span class="mut">/</span>
+    <span class="mut">审核中</span>
+    <span class="mut">/</span>
+    <b>运行详情</b>
+    <span class="mono mut" id="hash-hint">#p=mocx__skills&amp;view=run&amp;exec=b0e7b8a1…</span>
+  </div>
+
+  <!-- 入口演示：看板·审核中列的卡片长这样，点击它即进入本页 -->
+  <div class="card demo-card">
+    <h2>入口示例 · 看板「审核中」列卡片（点击卡片 → 本页；卡上保留外链 PR 图标）</h2>
+    <div class="qcard" onclick="pulse()" title="点击模拟跳转运行详情">
+      <div class="t"><span class="mono" style="color:var(--acc)">#184</span> 读端点 HTTP gzip 压缩</div>
+      <div class="m">
+        <span>mocx/skills</span><span>@DESKTOP-4K/reviewer</span><span>2 分钟前</span>
+        <span class="chip acc mono">fix/mocx/dash-gzip</span>
+      </div>
+      <div class="m small mut mono" title="worktree">D:\ai\skills-worktrees\review-pr-184</div>
+    </div>
+  </div>
+
+  <!-- 运行头部 -->
+  <header class="card" id="run-head">
+    <div class="title">
+      <h1><span class="n">#184</span>读端点 HTTP gzip 压缩——/api/items 3.1MB、/api/kanban 765KB 载荷 ~10x 缩减</h1>
+      <div class="meta" style="margin-top:6px">
+        <span><b>mocx/skills</b></span>
+        <span>worker <b>@DESKTOP-4K/reviewer</b></span>
+        <span class="chip acc mono" title="PR 分支">fix/mocx/dash-gzip</span>
+        <span class="mono mut" title="worktree">D:\ai\skills-worktrees\review-pr-184</span>
+      </div>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:6px;align-items:flex-end">
+      <div style="display:flex;gap:8px;align-items:center">
+        <span class="statechip state-RUNNING" id="state-chip">● 运行中</span>
+        <span class="chip warn" id="lease-chip">租约 04:37</span>
+        <span class="chip" id="bind-chip" title="执行流按 prompt 内 execution id 绑定会话文件">会话流 · 精确绑定</span>
+      </div>
+      <div class="meta">
+        <span>已运行 <b id="elapsed">11 分 22 秒</b></span>
+        <a href="#" onclick="return false">在 GitHub 打开 PR ↗</a>
+      </div>
+    </div>
+  </header>
+
+  <div class="cols">
+    <!-- 左：执行过程（全量回放，平铺不分类） -->
+    <section class="card">
+      <h2>执行过程 · 实时刷新（每 ~2.5s 增量拉取；思考/工具/回答全量平铺，不打标签；思考默认折叠，点击展开）</h2>
+      <div class="stream-head">
+        <span class="mut" style="font-size:12px;margin-left:auto" id="feed-stat">已渲染 0 条 · 0.0 KB</span>
+      </div>
+      <div class="stream">
+        <div id="feed"></div>
+        <div id="bottom-pill"><button class="pill" onclick="toBottom()">↓ 回到最新</button></div>
+      </div>
+    </section>
+
+    <!-- 右：确定性时间线 -->
+    <aside>
+      <div class="card" style="margin-bottom:14px">
+        <h2>控制面时间线（确定性事实，永远可得）</h2>
+        <ul class="tl" id="tl"></ul>
+      </div>
+      <div class="card">
+        <h2>证据（evidence）</h2>
+        <div id="ev-list"></div>
+      </div>
+    </aside>
+  </div>
+
+  <!-- 状态演示 -->
+  <div class="demo-bar card">
+    <h2 style="margin:0">状态演示：</h2>
+    <button class="fbtn on" data-st="RUNNING" onclick="setState('RUNNING',this)">运行中（精确绑定）</button>
+    <button class="fbtn" data-st="SUCCEEDED" onclick="setState('SUCCEEDED',this)">已完成</button>
+    <button class="fbtn" data-st="FAILED" onclick="setState('FAILED',this)">失败</button>
+    <button class="fbtn" data-st="SPAWNLOG" onclick="setState('SPAWNLOG',this)">轮日志绑定（本机 spawn）</button>
+    <button class="fbtn" data-st="WINDOW" onclick="setState('WINDOW',this)">时间窗推断</button>
+    <button class="fbtn" data-st="REPORTED" onclick="setState('REPORTED',this)">执行机上报</button>
+    <button class="fbtn" data-st="AGENT" onclick="setState('AGENT',this)">子代理执行（子会话直读）</button>
+    <button class="fbtn" data-st="NOSESSION" onclick="setState('NOSESSION',this)">无法绑定会话（仅时间线）</button>
+    <span class="mut" style="font-size:12px">切换查看八种界面状态（执行状态 × 绑定来源；假数据即时重放）</span>
+  </div>
+
+  <details class="contract card">
+    <summary style="cursor:pointer;font-weight:600">接口契约速览（实现须与本页交互一致；实现前可忽略）</summary>
+    <p class="mut" style="font-size:12.5px">GET <span class="mono">/api/run?org=&lt;org_repo&gt;&amp;exec=&lt;execution_id&gt;&amp;since=&lt;byte_offset&gt;</span></p>
+    <pre>{
+  "execution": {"id":"b0e7…","state":"RUNNING","worker":"DESKTOP-4K/reviewer",
+                "branch":"fix/mocx/dash-gzip","worktree":"D:\\ai\\skills-worktrees\\review-pr-184",
+                "created_at":1758096062.1,"expires_at":1758096362.1},
+  "session": {"bound":"exact","path":"~/.claude/projects/D--ai-skills/cbeb….jsonl",
+              "size":913855,"offset":402113,
+              "events":[{"t":1758096721.4,"text":"$ gitea diff 184",
+                         "out":"+ def _write_body(…)…","mono":true,"status":null},
+                        {"t":1758096723.9,"text":"先看 PR 描述与 diff 范围……",
+                         "fold":true}]},
+  // 本机 opencode 轮无 transcript → 轮日志绑定（path 指向轮日志，events 同构）：
+  // "session": {"bound":"spawn-log","path":"…\\state\\executions\\b0e7….log", …同上…}
+  "timeline": [{"kind":"execution.derived","at":1758096063.0,"payload":{…}}]
+}</pre>
+    <p class="mut" style="font-size:12.5px">bound ∈ exact ＞ spawn-log ＞ window ＞ reported ＞ agent-session ＞ null：按优先级取第一个可用来源；<b>渲染同构</b>——不同来源的 events 走同一条平铺回放，界面上只有 chip 不同。exact＝prompt 内 execution id 精确命中 claude transcript；spawn-log＝本机 spawn 轮（如 opencode）无 transcript，会话流逐行解析自轮日志 <span class="mono">&lt;state&gt;/executions/&lt;执行id&gt;.log</span>（claude stream-json / opencode --format json 两种方言；step 边界行不产生事件；tool exit≠0 → err 标红；轮日志持久保留，终态轮可回看）；window＝时间窗唯一候选，标注「推断」；reported＝执行机 agent 的进度上报（粗粒度）；<b>agent-session＝子代理执行（执行历史 agent 行进入，同一组件）——exec 参数此时为 <span class="mono">平台:会话id</span>（如 <span class="mono">zcode:sess_…</span>），流直读子会话全过程（zcode parts / claude 子代理 transcript），头部与右栏换档案元数据（任务提示词、平台、父会话、原始凭证指针），无 PR/分支/租约</b>；null＝无会话，仅时间线。events 为增量、按时间序全量平铺：思考/工具/回答的内容都原样进流（text＝内容，out＝工具输出，mono＝等宽渲染），不加类型标签、不提供过滤；fold＝超长内容（思考）默认折叠为一行预览、点击展开、展开后内部可滚；status 仅命令失败时为 "err"（标红）。解析失败降级为仅时间线。</p>
+  </details>
+
+  <footer>原型 · 全部为假数据 · code-loop dashboard「运行详情」视图 · 2026-09-17 初版 · 2026-09-18 补 runBindChip 绑定来源矩阵（spawn-log 轮日志等）· 2026-09-21 增「子代理执行」变体（agent-session 子会话直读，执行历史 agent 行复用本组件）</footer>
+</div>
+
+<script>
+'use strict';
+// ---------- 假数据：一轮真实感评审（PR #184 gzip）。
+// 思考/工具/回答全部内容按时间序平铺；style ∈ think|tool|text 只决定字体灰度，不产生标签/过滤 ----------
+const T0 = Date.now() - 11*60*1000 - 22*1000;
+const EVENTS = [
+ {gap:0,   st:'text', tx:'本轮指令：目标只有 PR #184（工作项 review:184）。看板已代你完成领取、工作区准备与绑定：execution=b0e7b8a1…、token=212、worktree=D:\\ai\\skills-worktrees\\review-pr-184（detached @ PR Head，已 bind）。不要 claim、不要 bind、不要另建 worktree——直接从规则文档《定向评审（看板手动轮）》一节开始，只评审这一个 PR。'},
+ {gap:2.1, st:'think', fold:true, tx:'先看 PR 描述与 diff 范围，确认改动是否集中在写出点 _write_body；然后重点核对三件事：压缩与 send_response 的先后顺序、HEAD/空 body 语义是否被改变、测试是否覆盖了阈值以下的响应。\n\n顺序上，压缩发生在 send_response 之前是对的——Content-Encoding 头与实际写出的字节保持一致，不会出现「声明了 gzip 但发的是明文」的错位。接着看空 body 分支：条件里有 body 的真值判断，bytes 空串时走原样写出，看起来 HEAD 是被有意放行的；但这要靠用例证明，不能靠读代码自信。阈值以下的小响应不压缩符合 PR 描述里「大载荷才压」的口径。\n\n测试方面，先跑全量 serve 用例，再针对 gzip 相关用例复跑，确认 Accept-Encoding 缺失/非 gzip 时的行为没有回归。'},
+ {gap:1.4, st:'text', tx:'开始评审 #184：先取 PR 描述与 diff，再在本地跑门禁与目标测试验证。'},
+ {gap:0.9, st:'tool', tx:'$ gitea view 184', out:'标题  feat(dash): 读端点 HTTP gzip 压缩——/api/items 3.1MB、/api/kanban 765KB 载荷 ~10x 缩减\n状态  开启 · 可合并 · 关联 issue #159'},
+ {gap:1.8, st:'tool', tx:'$ gitea diff 184', out:'-- services/code-loop/codeloop/dash/serve.py\n+ def _write_body(self, code, body, …):\n+     enc = None\n+     if _wants_gzip(self.headers) and len(body) >= MIN_GZIP and body:\n+         body = gzip.compress(body)\n+         enc = "gzip"\n+     self.send_response(code)\n+     if enc:\n+         self.send_header("Content-Encoding", enc)\n+ …\n（+38 -6，另 2 个测试文件）'},
+ {gap:2.4, st:'tool', tx:'Read services/code-loop/codeloop/dash/serve.py（_write_body 及调用点上下文 120 行）', out:' 96         self.send_response(code)\n 97         self.send_header("Content-Type", ctype)\n…\n142     def _wants_gzip(self, headers):\n143         return "gzip" in (headers.get("Accept-Encoding") or "")'},
+ {gap:1.2, st:'think', fold:true, tx:'顺序没问题：压缩发生在 send_response 之前，Content-Encoding 与实际写出一致；body 为空时跳过，说明 HEAD 已被有意放行？但条件里 body 的假值判断对 bytes 空串成立——需要跑一下 HEAD 用例确认语义。另外阈值以下的小响应不压缩也符合描述。\n\n如果 HEAD 用例确实失败，性质要看清楚：不是「压缩没生效」，而是「对空 body 声明了压缩」——客户端会等正文等到超时，这比不压缩更糟。修复应该是条件短路而不是砍功能。'},
+ {gap:1.6, st:'tool', tx:'$ python -m pytest tests/test_dashboard_serve.py -q', out:'F……..\nFAILED test_gzip_head_not_compressed — assert 304 == 200\n（HEAD 请求被判为不压缩路径后仍回 200 空 body？需复核断言）', status:'err'},
+ {gap:2.8, st:'text', tx:'HEAD 用例失败：响应头声明了 Content-Encoding: gzip 但 body 为空，客户端会等待正文直到超时。这是 MAJOR 问题——先在 worktree 检出上复跑单用例，排除环境噪声。'},
+ {gap:1.1, st:'tool', tx:'Read tests/test_dashboard_serve.py（gzip 用例段 60 行）', out:'def test_gzip_head_not_compressed(…):\n    …\n    self.assertEqual(r.status, 200)\n    self.assertNotIn("Content-Encoding", r.headers)'},
+ {gap:2.0, st:'tool', tx:'$ python -m pytest tests/test_dashboard_serve.py::test_gzip_head_not_compressed -q', out:'1 failed in 0.42s', status:'err'},
+ {gap:1.5, st:'think', fold:true, tx:'复现稳定，不是环境问题。按验收口径：读端点压缩属需求内，但不得改变 HEAD 语义——空 body 不得声明 gzip。判 Changes requested，MAJOR-1，给最小修复建议：_wants_gzip 分支加上 not body 的短路（或等价），并让该用例进回归。\n\n结论行文按 reviewer 规则：判词在前、证据行在后（复现命令与两次运行输出），覆盖度按 PR diff 核对后给 ok。'},
+ {gap:2.2, st:'tool', tx:'$ python .agents/loops/verify_skill.py', out:'static: ok · tests: 14 checked / 30 files · 0 fail'},
+ {gap:1.9, st:'text', tx:'门禁通过。撰写判词：Changes requested（MAJOR-1：HEAD/空 body 不得声明 Content-Encoding: gzip），附最小修复建议与复测命令，覆盖度按 PR diff 核对。'},
+ {gap:1.3, st:'tool', tx:'$ gitea comment 184 -b "…评审结论全文…"', out:'评论已发布（reviewer 签名自动附加）'},
+ {gap:0.8, st:'tool', tx:'report edit_pr → publish', out:'decision=Changes requested · coverage ok=true\nexecution → SUCCEEDED'},
+];
+// 轮日志绑定（spawn-log）的会话流：本机 spawn 的 opencode 轮没有 ~/.claude transcript，
+// 会话流逐行解析自 <state>/executions/<执行id>.log（--format json 方言）。
+// 与 claude 方言同构回放：reasoning→思考折叠、tool_use→等宽命令行、exit≠0→err 标红；
+// step_start/step_finish 等边界行不产生事件。内容与上面 exact 同一轮评审——渲染不因来源而变。
+const OC_EVENTS = [
+ {gap:0,   st:'text', tx:'本轮指令：定向评审 PR #184（工作项 review:184）。看板已代你完成领取、工作区准备与绑定：execution=b0e7b8a1…、worktree=D:\\ai\\skills-worktrees\\review-pr-184。直接从《定向评审（看板手动轮）》开始，只评审这一个 PR。'},
+ {gap:2.6, st:'think', fold:true, tx:'这是 opencode 轮，没有 claude transcript 可绑定，会话流来自本机 spawn 的轮日志。评审路径不变：先取 PR 描述与 diff，确认改动集中在 _write_body；再核对压缩与 send_response 的顺序、空 body 语义、阈值以下的放行。'},
+ {gap:1.2, st:'text', tx:'开始评审 #184：先看描述与 diff，再在本地跑门禁与目标测试。'},
+ {gap:0.9, st:'tool', tx:'$ gitea view 184', out:'标题  feat(dash): 读端点 HTTP gzip 压缩……\n状态  开启 · 可合并 · 关联 issue #159'},
+ {gap:1.7, st:'tool', tx:'$ gitea diff 184', out:'-- services/code-loop/codeloop/dash/serve.py\n+ def _write_body(self, code, body, …):\n+     if _wants_gzip(self.headers) and len(body) >= MIN_GZIP and body:\n…\n（+38 -6，另 2 个测试文件）'},
+ {gap:2.1, st:'think', fold:true, tx:'顺序正确。空 body 走原样写出——HEAD 看似被有意放行，但要靠用例证明。如果 HEAD 用例失败，性质是「对空 body 声明了 gzip」：客户端会等正文到超时，比不压缩更糟。'},
+ {gap:1.4, st:'tool', tx:'$ python -m pytest tests/test_dashboard_serve.py -q', out:'F……..\nFAILED test_gzip_head_not_compressed — assert 304 == 200', status:'err'},
+ {gap:2.3, st:'text', tx:'HEAD 用例稳定失败：响应头声明 Content-Encoding: gzip 但 body 为空。MAJOR-1，修复应是条件短路而不是砍功能。'},
+ {gap:1.1, st:'tool', tx:'$ python .agents/loops/verify_skill.py', out:'static: ok · tests: 14 checked / 30 files · 0 fail'},
+ {gap:1.8, st:'text', tx:'门禁通过。结论：Changes requested（MAJOR-1：HEAD/空 body 不得声明 gzip），附最小修复建议与复测命令。'},
+ {gap:0.9, st:'tool', tx:'report edit_pr → publish', out:'decision=Changes requested · coverage ok=true\nexecution → SUCCEEDED'},
+];
+// 执行机上报（reported）的会话流：远程轮没有本地日志/transcript，流来自 agent 的粗粒度进度上报。
+const REPORTED_EVENTS = [
+ {gap:0,   st:'text', tx:'已领取工作项 review:184（token 212）'},
+ {gap:1.5, st:'text', tx:'worktree 就绪：D:\\ai\\skills-worktrees\\review-pr-184（detached @ PR head）'},
+ {gap:1.2, st:'text', tx:'会话已绑定 execution，开始定向评审'},
+ {gap:2.2, st:'text', tx:'正在读取 PR 描述、diff 与关联 issue 评论……'},
+ {gap:3.1, st:'tool', tx:'门禁执行中', out:'verify_skill.py · 14 checked / 30 files · 0 fail'},
+ {gap:2.0, st:'text', tx:'判词已发布：Changes requested（MAJOR-1）· coverage ok=true'},
+];
+// 子代理执行（agent-session，子会话直读）：执行历史列表 agent 行进入本页。
+// 流=zcode 子会话 parts 全量回放（首条即任务提示词全文），与 loop 轮渲染完全同构。
+const AGENT_EVENTS = [
+ {gap:0,   st:'text', tx:'你是独立代码评审员，评审一个 bug 修复。只读评审，不要修改任何文件。\n\n## 背景\nIssue #536：总览页首刷 9.8s，根因是 store 零索引导致 2270 次全表扫描。修复 PR：portal-536（worktree 已建）。\n\n## 要求\n- 覆盖率闭环：建立 (path,status) 清单核对 100% 显式覆盖\n- 仅 Critical/High 设卡，格式问题不算阻塞\n- 逐条验证 Finding，不机械接受'},
+ {gap:2.4, st:'think', fold:true, tx:'先看 diff 范围和索引迁移脚本，确认 WHERE 前缀与索引列序一致；再核对测试是否覆盖了「无索引→有索引」的前后对比，以及迁移的幂等性。'},
+ {gap:1.1, st:'tool', tx:'Bash git diff master…portal-536 --stat', out:'services/portal/store.py        | 32 +++++++\nservices/portal/migrations/0007_idx.sql | 9 +++\ntests/test_store_index.py         | 41 +++++++'},
+ {gap:1.8, st:'tool', tx:'Read services/portal/migrations/0007_idx.sql', out:'CREATE INDEX IF NOT EXISTS idx_wi_cover\n  ON work_items(project_id, kind, created_at);'},
+ {gap:2.2, st:'tool', tx:'Grep "SELECT .* FROM work_items" services/portal/store.py', out:'store.py:88  WHERE project_id=? AND kind=? ORDER BY created_at\nstore.py:141 WHERE project_id=? AND state=?'},
+ {gap:1.6, st:'think', fold:true, tx:'88 行查询与复合索引列序完全对齐；141 行只按 project_id+state 过滤——索引前缀 project_id 仍可用，扫描量从全表降到项目内。迁移用 IF NOT EXISTS，幂等成立。'},
+ {gap:1.4, st:'tool', tx:'Bash python -m pytest tests/test_store_index.py -q', out:'9 passed in 0.38s'},
+ {gap:2.1, st:'tool', tx:'Bash python bench_overview.py --before --after', out:'before: 2270 full scans ≈ 9.8s\nafter:  3 index probes ≈ 0.76s（12.9×）'},
+ {gap:1.3, st:'text', tx:'评审结论：Approved（1 条 Non-blocking 建议）。\n· 索引覆盖 WHERE 全部前缀，迁移幂等，前后对比实测 12.9×；\n· 建议 work_items.state 后续补部分索引（不在本 PR 范围）。'},
+];
+const AGENT_TIMELINE = [
+ {k:'子会话开始（zcode 子代理）', d:'parent sess_9b93… · vibe-coding 中等任务', tm:'09:57:12', done:1},
+ {k:'子会话结束',                 d:'completed · 9m02s', tm:'10:06:14', done:1},
+ {k:'采集入库（agentruns.sweep）', d:'agent_runs upsert · id=zcode:sess_subagent_agent_b19b', tm:'10:08:0x', done:0},
+];
+const AGENT_META = {
+  title:'独立对抗评审：issue #536 总览页慢查询修复（worktree portal-536）',
+  project:'D:\\ai\\ai-portal-service（未注册）',
+  chips:'<span class="chip acc">zcode</span><span class="chip">子代理档案</span>'
+      + '<span class="chip" title="父会话指针">parent sess_9b93…</span>',
+  right:'<span class="chip ok">✓ 已完成</span><span class="chip" id="bind-chip">会话流 · 子会话直读</span>',
+  elapsed:'已运行 <b>9 分 02 秒</b>',
+  evid:[{k:'platform',  chip:'acc', txt:'zcode · task_type=subagent_child（parts 全量过程）'},
+        {k:'原始凭证',   chip:'',    txt:'~/.zcode/cli/db/db.sqlite · session sess_subagent_agent_b19b'},
+        {k:'归属任务',   chip:'',    txt:'vibe-coding 中等任务（主会话 sess_9b93…）· 无 CP 执行关联'}],
+};
+const TIMELINE = [
+ {k:'work_item claimed',  d:'review:184 · token 212', tm:'14:41:02', done:1},
+ {k:'worktree 准备',      d:'review-pr-184 · detached @ PR head', tm:'14:41:03', done:1},
+ {k:'bind',               d:'worktree 绑定到执行', tm:'14:41:04', done:1},
+ {k:'spawn（看板手动轮）', spawn:1, d:'pid 20680 · claude -p', tm:'14:41:05', done:1},
+ {k:'evidence: verification', d:'verify_skill.py · 0 fail', tm:'14:49:12', done:1},
+ {k:'evidence: judgment', d:'Changes requested（MAJOR-1）', tm:'14:52:31', done:1},
+ {k:'execution.reported', d:'decision=Changes requested', tm:'14:52:33', done:0},
+ {k:'publication.sent',   d:'comment → GitHub', tm:'14:52:34', done:0},
+];
+const EVID = [
+ {k:'verification', chip:'ok',  txt:'verify_skill.py PASS · 14 checked / 30 files'},
+ {k:'judgment',     chip:'acc', txt:'Changes requested · MAJOR-1 HEAD 空 body 不得声明 gzip'},
+];
+
+// ---------- 渲染 ----------
+const feed = document.getElementById('feed');
+let shown = 0, timer = null, stick = true, bytes = 402113, startBytes = 402113;
+let feedEvents = EVENTS;   // 当前演示状态的会话流数据源（绑定来源不同，回放渲染同构）
+function esc(s){ return String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function el(html){ const t = document.createElement('template'); t.innerHTML = html.trim(); return t.content.firstChild; }
+function trunc(s, n){ s = String(s ?? ''); return s.length > n ? s.slice(0, n) + '……' : s; }
+function renderEvent(e){
+  const body = e.fold   /* 长内容（思考）：默认折叠，一行预览，点击展开 */
+    ? `<details class="fold"><summary>${esc(trunc(e.tx, 88))}</summary><div class="full">${esc(e.tx)}</div></details>`
+    : esc(e.tx);
+  feed.appendChild(el(`<div class="ev ${e.st} ${e.status === 'err' ? 'err' : ''}">
+    <span class="tm">${new Date(T0 + (e.at || 0)).toTimeString().slice(0, 8)}</span>
+    <div class="txt">${body}${e.out ? `<div class="out">${esc(e.out)}</div>` : ''}</div></div>`));
+}
+function pump(){
+  if (shown >= feedEvents.length){
+    document.getElementById('feed-stat').textContent += ' · 流已结束（保留现场，可回看）';
+    return;
+  }
+  const e = feedEvents[shown++];
+  e.at = shown === 1 ? 0 : (feedEvents[shown - 2].at || 0) + e.gap * 1000;
+  bytes += 1200 + Math.floor(Math.random() * 9000);
+  renderEvent(e);
+  document.getElementById('feed-stat').textContent =
+    `已渲染 ${shown} 条 · ${(bytes / 1024).toFixed(1)} KB`;
+  if (stick) feed.scrollTop = feed.scrollHeight;
+  timer = setTimeout(pump, 600 + Math.random() * 1800);
+}
+feed.addEventListener('scroll', () => {
+  stick = feed.scrollHeight - feed.scrollTop - feed.clientHeight < 40;
+  document.getElementById('bottom-pill').style.display = stick ? 'none' : 'block';
+});
+function toBottom(){ stick = true; feed.scrollTop = feed.scrollHeight;
+  document.getElementById('bottom-pill').style.display = 'none'; }
+
+// ---------- 头部状态 / 时间线 / 证据 ----------
+let leaseLeft = 277, leaseTimer = setInterval(() => {
+  const c = document.getElementById('lease-chip');
+  if (!c) return;                      // 子代理变体头部无租约 chip
+  leaseLeft = Math.max(0, leaseLeft - 1);
+  if (leaseLeft === 0){ c.textContent = '租约已过期 · 等待收回'; clearInterval(leaseTimer); }
+  else c.textContent = `租约 ${String(Math.floor(leaseLeft / 60)).padStart(2, '0')}:${String(leaseLeft % 60).padStart(2, '0')}`;
+}, 1000);
+setInterval(() => { const s = Math.floor((Date.now() - T0) / 1000);
+  const e = document.getElementById('elapsed'); if (!e) return;
+  e.textContent = s >= 60 ? `${Math.floor(s / 60)} 分 ${s % 60} 秒` : `${s} 秒`; }, 1000);
+const tl = document.getElementById('tl');
+function renderTl(spawnDesc, data){   // spawn 行随绑定来源换描述；data 缺省=loop 轮时间线
+  tl.innerHTML = '';
+  (data || TIMELINE).forEach(t => tl.appendChild(el(`<li class="${t.done ? 'done' : ''}">
+    <div class="k">${esc(t.k)}</div><div class="d">${esc(t.spawn && spawnDesc ? spawnDesc : t.d)}</div><div class="tm">${t.tm}</div></li>`)));
+}
+renderTl();
+function renderEvid(list){
+  const evl = document.getElementById('ev-list'); evl.innerHTML = '';
+  list.forEach(v => evl.appendChild(el(`<div style="margin-bottom:8px">
+    <span class="chip ${v.chip}">${esc(v.k)}</span> <span class="mut" style="font-size:12.5px">${esc(v.txt)}</span></div>`)));
+}
+renderEvid(EVID);
+
+function pulse(){ const h = document.getElementById('run-head');
+  h.style.boxShadow = '0 0 0 3px var(--acc-soft)'; h.scrollIntoView({behavior:'smooth', block:'nearest'});
+  setTimeout(() => h.style.boxShadow = '', 700); }
+
+// runBindChip 绑定来源矩阵（实现须按此出 chip；label / class / title 三件套一一对应）
+const BINDS = {
+  'exact':         ['会话流 · 精确绑定',    'chip',      '执行流按 prompt 内 execution id 精确绑定会话文件'],
+  'spawn-log':     ['会话流 · 轮日志',      'chip',      '会话流来自本机 spawn 的轮日志（<state>/executions/<执行id>.log），claude / opencode 两种方言逐行解析；轮日志持久保留，终态轮也可回看'],
+  'window':        ['会话流 · 时间窗推断',  'chip',      '时间窗内唯一候选会话，非精确匹配'],
+  'reported':      ['会话流 · 执行机上报',  'chip',      '会话流来自执行机 agent 的进度上报（远程轮与本地轮同构）'],
+  'agent-session': ['会话流 · 子会话直读',  'chip',      '子代理会话直读：zcode 子会话 parts / claude 子代理 transcript，与 loop 轮同一平铺回放（执行历史 agent 行进入）'],
+  'none':          ['无会话绑定 · 仅时间线','chip warn', '未找到该执行的会话记录（如 cron 轮次），只展示控制面时间线'],
+};
+// 头部/时间线/证据在「子代理执行」变体下整体切换，其余状态还原为 loop 轮现场
+const HEAD0 = {
+  title:   document.querySelector('#run-head .title').innerHTML,
+  right:   document.querySelector('#run-head > div:last-child').innerHTML,
+  evid:    document.getElementById('ev-list').innerHTML,
+  hash:    document.getElementById('hash-hint').textContent,
+  agent:   false,
+};
+function setHeaderAgent(on){
+  const head = document.getElementById('run-head');
+  if (on === HEAD0.agent) return;
+  HEAD0.agent = on;
+  if (on){
+    head.querySelector('.title').innerHTML =
+      '<h1>' + esc(AGENT_META.title) + '</h1>'
+      + '<div class="meta" style="margin-top:6px"><span><b>' + esc(AGENT_META.project) + '</b></span>'
+      + AGENT_META.chips + '</div>';
+    head.querySelector('#run-head > div:last-child, div:last-child').innerHTML = AGENT_META.right;
+    document.getElementById('hash-hint').textContent = '#p=&view=run&exec=zcode%3Asess_subagent_agent_b19b';
+  } else {
+    head.querySelector('.title').innerHTML = HEAD0.title;
+    head.querySelector('#run-head > div:last-child, div:last-child').innerHTML = HEAD0.right;
+    document.getElementById('hash-hint').textContent = HEAD0.hash;
+    document.getElementById('ev-list').innerHTML = HEAD0.evid;
+  }
+}
+function setBind(key){
+  const [label, cls, title] = BINDS[key], bind = document.getElementById('bind-chip');
+  bind.textContent = label; bind.className = cls; bind.title = title;
+}
+function replay(){   // 非增量演示：整流即刻回放（差异在 chip 与数据源，不在播放方式）
+  feedEvents.forEach((e, i) => { e.at = i === 0 ? 0 : (feedEvents[i-1].at || 0) + e.gap * 1000; renderEvent(e); });
+  shown = feedEvents.length; toBottom();
+  document.getElementById('feed-stat').textContent =
+    `已渲染 ${feedEvents.length} 条 · 流已结束（保留现场，可回看）`;
+}
+function setState(st, btn){
+  document.querySelectorAll('.fbtn[data-st]').forEach(x => x.classList.toggle('on', x === btn));
+  const chip = document.getElementById('state-chip');
+  feed.innerHTML = ''; shown = 0; clearTimeout(timer); stick = true;
+  document.getElementById('bottom-pill').style.display = 'none';
+  if (st === 'AGENT'){   // 子代理执行：同一组件，头部/时间线/证据整体切到档案元数据
+    setHeaderAgent(true);
+    feedEvents = AGENT_EVENTS;
+    setBind('agent-session');
+    renderTl(null, AGENT_TIMELINE);
+    renderEvid(AGENT_META.evid);
+    chip.textContent = '✓ 已完成'; chip.className = 'statechip state-SUCCEEDED';
+    document.getElementById('feed-stat').textContent = '已渲染 0 条 · 0.0 KB';
+    bytes = 0; replay();
+    return;
+  }
+  setHeaderAgent(false);
+  feedEvents = EVENTS;
+  if (st === 'NOSESSION'){
+    chip.textContent = '● 运行中'; chip.className = 'statechip state-RUNNING';
+    setBind('none');
+    renderTl(null);
+    feed.appendChild(el('<div class="ev"><span class="tm">—</span><div class="txt">未找到该执行的会话记录（如 cron 拉起轮次无法按内容绑定）——本页只展示控制面时间线与证据，看板卡片仍可进入。</div></div>'));
+    document.getElementById('feed-stat').textContent = '会话流不可用';
+    return;
+  }
+  if (st === 'SPAWNLOG') feedEvents = OC_EVENTS;
+  if (st === 'REPORTED') feedEvents = REPORTED_EVENTS;
+  setBind({SPAWNLOG:'spawn-log', WINDOW:'window', REPORTED:'reported'}[st] || 'exact');
+  renderTl(st === 'SPAWNLOG'
+    ? 'pid 21337 · opencode run --auto --format json · 轮日志 executions/b0e7….log'
+    : null);
+  const running = (st === 'RUNNING' || st === 'SPAWNLOG' || st === 'WINDOW' || st === 'REPORTED');
+  chip.className = 'statechip state-' + (running ? 'RUNNING' : st);
+  chip.textContent = running ? '● 运行中' : (st === 'SUCCEEDED' ? '✓ 已完成' : '✕ 失败');
+  document.getElementById('feed-stat').textContent = '已渲染 0 条 · 0.0 KB';
+  bytes = startBytes;
+  if (st === 'RUNNING') pump();   // 只有「运行中（精确绑定）」演示增量拉取
+  else replay();
+}
+pump();
+</script>
+</body>
+</html>

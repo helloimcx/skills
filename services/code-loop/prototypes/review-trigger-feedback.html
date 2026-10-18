@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<!--
+  原型:review 触发反馈闭环 —— 看板 PR 卡三态(唯一 UI 设计源,确认后才动 frontend/ 实现)
+  对应需求:docs/specs/2026-09-18-review-trigger-feedback.md(Scope A/B/C 的前端部分)
+  入口路径:看板 #p=<org> → 「待 agent review」/「审核中」列 PR 卡
+  数据契约:
+    1) kanban PR 卡新增 trigger 字段: {state: PENDING|CLAIMED|SPAWNED|FAILED|EXPIRED|DONE|null,
+       fail_reason: string|null, at: epoch_seconds}
+    2) GET /api/review/preflight?projects=<逗号分隔> →
+       {"<project>": {"online": ["机器名"...], "registered": ["机器名"...]}}
+       按钮三态判定: registered 非空 → 可点; online 非空但 registered 空 → 禁用;
+       online 空 → 可点(排队语义, title 提示)。
+    3) 运行详情(远程轮)无 UI 改动: /api/run 响应格式不变,会话流同构回退。
+    4) kanban PR 卡新增 review_scope / review_scope_note(2026-09-18 追加,spec:
+       docs/specs/2026-09-18-dash-trigger-feedback.md):控制面是否会给该 PR 派生评审项
+       (open ∧ base==项目 base ∧ 非 draft)。false → 按钮置灰 + 卡上说明;null = 未知
+       (配置读不到)→ 按 true 处理,fail-open。
+  主题 token 与 frontend/app.css 仪表面板一致(petrol/冷灰纸底)。
+-->
+<head>
+<meta charset="utf-8">
+<title>原型 · review 触发反馈闭环</title>
+<style>
+:root{--paper:#f4f6f8;--ink:#16232e;--acc:#0e7490;--ok:#2e7d32;--err:#b3261e;--warn:#b45309;
+      --line:#d8dfe5;--card:#ffffff;--mut:#5b6b78}
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--ink);
+     font:14px/1.5 "Segoe UI","Microsoft YaHei",sans-serif;padding:24px}
+h1{font-size:17px;margin:0 0 4px}
+.note{color:var(--mut);font-size:12.5px;margin-bottom:20px}
+.board{display:flex;gap:16px;align-items:flex-start}
+.col{background:#eef1f4;border:1px solid var(--line);border-radius:8px;width:340px;flex:none}
+.col-head{padding:8px 12px;font-weight:600;border-bottom:1px solid var(--line);font-size:13px}
+.col-head .dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px}
+.k-review .dot{background:var(--warn)} .k-reviewing .dot{background:var(--acc)}
+.col-body{padding:10px;display:flex;flex-direction:column;gap:10px;min-height:120px}
+.card{background:var(--card);border:1px solid var(--line);border-left:3px solid var(--line);
+      border-radius:6px;padding:10px 12px}
+.card.reviewing{border-left-color:var(--acc)}
+.num{font-weight:600;color:var(--acc);text-decoration:none}
+.title{display:block;margin:2px 0 8px;color:var(--ink)}
+.meta{color:var(--mut);font-size:12px;margin-bottom:8px}
+.btn{border:1px solid var(--acc);color:var(--acc);background:#fff;border-radius:5px;
+     padding:3px 10px;font-size:12.5px;cursor:pointer}
+.btn:hover{background:#e8f2f5}
+.btn:disabled{border-color:var(--line);color:var(--mut);cursor:not-allowed;background:#f6f8f9}
+/* A. FAILED 持久警示条 */
+.failbar{display:flex;gap:6px;align-items:baseline;background:#fbeeec;border:1px solid #ecc8c5;
+         border-radius:4px;padding:6px 8px;margin-bottom:8px;font-size:12px}
+.failbar b{color:var(--err);flex:none}
+.failbar span{color:#7a403c}
+.failbar .at{color:var(--mut);margin-left:auto;flex:none}
+/* 徽标 */
+.badge{display:inline-block;border-radius:9px;padding:1px 8px;font-size:11.5px;margin-right:6px}
+.badge.run{background:#e6f2f5;color:var(--acc)}
+.badge.warn{background:#fdf1e3;color:var(--warn)}
+.legend{margin-top:22px;max-width:720px;background:#fff;border:1px solid var(--line);
+        border-radius:8px;padding:12px 16px;font-size:12.5px;color:var(--mut)}
+.legend code{background:#eef1f4;border-radius:3px;padding:0 4px}
+.legend li{margin:3px 0}
+</style>
+</head>
+<body>
+<h1>原型 · review 触发反馈闭环(看板 PR 卡状态 + 范围外)</h1>
+<div class="note">悬停按钮可看 title 提示(实现的判定来自 preflight 端点 + kanban trigger 字段)。假数据静态演示,无交互逻辑。</div>
+
+<div class="board">
+  <div class="col k-review">
+    <div class="col-head"><span class="dot"></span>待 agent review</div>
+    <div class="col-body">
+
+      <!-- 态1: 正常可点(preflight: 有在线且已注册机器) -->
+      <div class="card">
+        <a class="num" href="#">#207</a>
+        <span class="title">fix(dash): runlog.tail 单行超限死锁</span>
+        <div class="meta">GPU测试机 在线·已注册 · 2 分钟前</div>
+        <button class="btn" title="已注册执行机: GPU测试机">触发审核</button>
+      </div>
+
+      <!-- 态2: FAILED 持久警示条 + 可重试(kanban trigger 字段) -->
+      <div class="card">
+        <div class="failbar"><b>上次触发失败</b>
+          <span>目标机器未注册执行信息(GPU测试机)</span>
+          <span class="at">10:42</span></div>
+        <a class="num" href="#">#196</a>
+        <span class="title">feat(cp): verify 考题入库</span>
+        <div class="meta">GPU测试机 在线·<b style="color:var(--err)">未注册本项目</b></div>
+        <button class="btn" title="GPU测试机 在线但未注册此项目。在该机执行: dashboard.py register --project yilian-yilian_server_ai__ai_vector --repo &lt;检出路径&gt;">注册后可触发</button>
+      </div>
+
+      <!-- 态3: 禁用(有 agent 在线但都未注册) —— 与态2的区别: 从未触发过, 无警示条 -->
+      <div class="card">
+        <a class="num" href="#">#189</a>
+        <span class="title">fix(cp): collect 锁接管 stale+live</span>
+        <div class="meta">GPU测试机 在线·未注册本项目</div>
+        <button class="btn" disabled title="GPU测试机 在线但未注册此项目。在该机执行: dashboard.py register --project … --repo …">暂不可触发</button>
+      </div>
+
+      <!-- 态6: 范围外(PR base 不是本项目控制面 base) —— 控制面永不派生评审项,
+           按钮置灰并就地说明;这条判定是静态事实(采集 base vs 项目配置 base),
+           不是忙闲预检,控制面在 claim 时仍是唯一裁决者 -->
+      <div class="card">
+        <span class="badge warn">不在评审范围 · base=dev</span>
+        <a class="num" href="#">#156</a>
+        <span class="title">fix(http): handle RFC5987 filename* in disposition</span>
+        <div class="meta">ai_vector · 控制面只评审 base=master 的开放 PR</div>
+        <button class="btn" disabled title="控制面只评审 base=master 的开放 PR(本 PR base=dev)">不在评审范围</button>
+      </div>
+
+      <!-- 态4: 排队提示(无 agent 在线, 保持可点) -->
+      <div class="card">
+        <a class="num" href="#">#184</a>
+        <span class="title">feat(dash): list 默认活动态</span>
+        <div class="meta">暂无 agent 在线</div>
+        <button class="btn" title="暂无 agent 在线: 下发后将排队等待, agent 上线即领取(超时未领自动过期可重试)">触发审核</button>
+      </div>
+
+    </div>
+  </div>
+
+  <div class="col k-reviewing">
+    <div class="col-head"><span class="dot"></span>审核中</div>
+    <div class="col-body">
+
+      <!-- 态5: 评审中(远程轮) —— 整卡点击进运行详情, 会话流同构回退(无 UI 改动) -->
+      <div class="card reviewing">
+        <span class="badge run">评审中</span>
+        <a class="num" href="#">#191</a>
+        <span class="title">feat(cp): CP 指令通道 + 服务合并</span>
+        <div class="meta">GPU测试机 · 执行 4c2f… · 点卡片看实时会话流</div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<div class="legend">
+  <b>本原型定义的四件事</b>
+  <ul>
+    <li><b>失败持久可见</b>:触发失败后 PR 卡常驻警示条(原因 + 时间),刷新不消失;修复后重新触发成功即消失。(态2)</li>
+    <li><b>注册预检</b>:按钮按 preflight 分三态 —— 可点(已注册)/ 禁用+register 指引(在线未注册,态3)/ 可点+排队 title(无 agent 在线,态4)。</li>
+    <li><b>进度上报</b>:远程评审轮与本地轮在运行详情呈现一致(会话流同构回退),看板侧无新增元素,仅审核中卡现状不变(态5)。</li>
+    <li><b>范围诚实</b>(2026-09-18 追加):PR 的 base 不是本项目控制面 base 时,按钮置灰 + 卡上说明
+      (态6),不再给一个必然失败的按钮;范围外的卡同时抑制失败警示条(永久原因优先于瞬时症状,避免读成「可重试」)。</li>
+  </ul>
+</div>
+</body>
+</html>
