@@ -34,9 +34,9 @@ SCAN_LINES = 5              # ...and exact matching only the first messages:
 
 
 def munged(repo_cwd):
-    """Claude CLI's transcript directory name for a cwd (observed:
-    ``D:\\ai\\skills`` → ``D--ai-skills``, ``D:\\ai\\ai_quality_analysis`` →
-    ``D--ai-ai-quality-analysis``): every non-alphanumeric byte becomes ``-``."""
+    """Claude CLI's transcript directory name for a cwd (e.g.:
+    ``D:\\projects\\skills`` → ``D--projects-skills``, ``D:\\projects\\quality_analysis`` →
+    ``D--projects-quality-analysis``): every non-alphanumeric byte becomes ``-``."""
     return re.sub(r'[^A-Za-z0-9]', '-', str(repo_cwd))
 
 

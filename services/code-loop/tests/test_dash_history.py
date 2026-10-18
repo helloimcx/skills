@@ -361,7 +361,7 @@ class RunDetailBranchTests(AgentHistoryTestBase):
         mixed = 'claude:aaaa1111#toolu_01AbC123'
         self.db.execute(
             'INSERT INTO agent_runs (id, platform, project, state, started_at)'
-            ' VALUES (?,?,?,?,?)', (mixed, 'claude', 'D:\ai\demo',
+            ' VALUES (?,?,?,?,?)', (mixed, 'claude', 'D:\projects\demo',
                                     'SUCCEEDED', BASE_S))
         self.db.commit()
         ctype, status, payload = serve.route(self.db, '/api/run',
@@ -378,13 +378,13 @@ class RunDetailBranchTests(AgentHistoryTestBase):
         with self.db:
             self.db.execute(
                 'INSERT INTO agent_runs (id, platform, project, state, started_at)'
-                ' VALUES (?,?,?,?,?)', (AGENT_ID, 'zcode', 'D:\ai\demo',
+                ' VALUES (?,?,?,?,?)', (AGENT_ID, 'zcode', 'D:\projects\demo',
                                         'SUCCEEDED', BASE_S + 120))
         feed = historyapi.history(self.db, {})
-        self.assertEqual(set(feed['projects']), {'a__b', 'D:\ai\demo'})
-        scoped = historyapi.history(self.db, {'project': 'D:\ai\demo'})
+        self.assertEqual(set(feed['projects']), {'a__b', 'D:\projects\demo'})
+        scoped = historyapi.history(self.db, {'project': 'D:\projects\demo'})
         self.assertEqual(scoped['total'], 1)
-        self.assertEqual(set(scoped['projects']), {'a__b', 'D:\ai\demo'})
+        self.assertEqual(set(scoped['projects']), {'a__b', 'D:\projects\demo'})
 
     def test_serve_route_rejects_invalid_and_serves_history(self):
         status = serve.route(self.db, '/api/run', {'exec': 'zzz'})
@@ -412,7 +412,7 @@ def _oc_session(root, sid, prompt, with_tool=True):
     ses_dir = storage / 'session' / 'proj1'
     ses_dir.mkdir(parents=True, exist_ok=True)
     (ses_dir / ('%s.json' % sid)).write_text(json.dumps({
-        'id': sid, 'directory': 'D:\ai\demo',
+        'id': sid, 'directory': 'D:\projects\demo',
         'time': {'created': int(BASE_S * 1000), 'updated': int(BASE_S * 1000) + 540_000},
     }), encoding='utf-8')
     msg_dir = storage / 'message' / sid
@@ -468,17 +468,17 @@ class OpencodeTests(AgentHistoryTestBase):
 
 def _pi_session(root, stem, prompt, tool_calls=(('Bash', 't1'),)):
     """Minimal pi JSONL session: header + first user message + toolCall block."""
-    path = Path(root) / '--D--ai-demo--' / ('%s.jsonl' % stem)
+    path = Path(root) / '--D--projects-demo--' / ('%s.jsonl' % stem)
     path.parent.mkdir(parents=True, exist_ok=True)
     lines = [
-        json.dumps({'type': 'session', 'cwd': 'D:\ai\demo'}),
+        json.dumps({'type': 'session', 'cwd': 'D:\projects\demo'}),
         json.dumps({'type': 'message', 'timestamp': '2026-09-21T02:00:00Z',
                     'message': {'role': 'user',
                                 'content': [{'type': 'text', 'text': prompt}]}}),
         json.dumps({'type': 'message', 'timestamp': '2026-09-21T02:01:00Z',
                     'message': {'role': 'assistant', 'content': [
                         {'type': 'toolCall', 'id': tool_calls[0][1],
-                         'name': tool_calls[0][0], 'arguments': {}}]}}),
+                          'name': tool_calls[0][0], 'arguments': {}}]}}),
         json.dumps({'type': 'message', 'timestamp': '2026-09-21T02:02:00Z',
                     'message': {'role': 'toolResult', 'toolCallId': tool_calls[0][1],
                                 'content': [{'type': 'text', 'text': 'ok'}],
@@ -499,7 +499,7 @@ class PiTests(AgentHistoryTestBase):
         run = runs[0]
         self.assertEqual(run['platform'], 'pi')
         self.assertIn('pi-sess-1', run['id'])
-        self.assertEqual(run['project'], 'D:\ai\demo')
+        self.assertEqual(run['project'], 'D:\projects\demo')
         self.assertEqual(json.loads(run['tool_counts']), {'Bash': 1})
         self.assertEqual(run['transcript_ref'], str(path))
 

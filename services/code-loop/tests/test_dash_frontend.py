@@ -144,16 +144,16 @@ const d = src.match(/const displayProject = p => \{[\s\S]*?\n\};\r?\n/);
 const m = src.match(/const projectsOf = raw =>[\s\S]*?\|\| '[\s\S]';\r?\n/);
 if (!d || !m) { console.error('displayProject/projectsOf not found'); process.exit(2); }
 // eval 内 const 不泄漏到外层作用域：把定义与断言放进同一函数体执行
-const DATA = {ov: {projects: [{org_repo: 'mocx__skills', repo: 'mocx/skills'}]}};
+const DATA = {ov: {projects: [{org_repo: 'demo__skills', repo: 'demo/skills'}]}};
 const body = d[0] + m[0] + `
 const cases = [
-  ['yilian-yilian_server_ai__ai_memory,yilian-yilian_server_ai__ai_vector',
-   'yilian-yilian_server_ai/ai_memory、yilian-yilian_server_ai/ai_vector'],
+  ['demo-team__ai_memory,demo-team__ai_vector',
+   'demo-team/ai_memory、demo-team/ai_vector'],
   ['', '无'],
   [null, '无'],
-  ['mocx__skills', 'mocx/skills'],
-  ['D:/ai/skills, yilian-yilian_server_ai__ai_memory',
-   'skills（本地项目）、yilian-yilian_server_ai/ai_memory'],
+  ['demo__skills', 'demo/skills'],
+  ['D:/projects/skills, demo-team__ai_memory',
+   'skills（本地项目）、demo-team/ai_memory'],
 ];
 for (const [input, want] of cases) {
   const got = projectsOf(input);

@@ -161,8 +161,10 @@ python services/code-loop/scripts/cp_server.py machines revoke --name dev-b    #
 ## 测试
 
 ```bash
-python .agents/loops/verify_skill.py          # 仓库门禁：含 tests/ 全部套件（fail-closed）
-python services/code-loop/tests/test_cp_xxx.py     # 单个测试直跑（或 python -m pytest -q services/code-loop/tests/）
+python3 -m unittest discover -s services/code-loop/tests -p 'test_*.py'  # 核心服务套件（fail-closed）
+python3 -m unittest discover -s tests -p 'test_*.py'                   # 仓库级集成与软链契约测试
+python3 code-loop/scripts/test_shims.py                               # 技能 shim 入口测试
+python3 services/code-loop/tests/test_cp_xxx.py                       # 单个测试直跑
 ```
 
 ### 测试分层映射

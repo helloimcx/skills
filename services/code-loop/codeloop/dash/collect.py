@@ -110,7 +110,7 @@ def collect_project(db_path, config_path, now=None):
     serialize writers (PR #134 semantics preserved — a busy write becomes
     this project's CollectError, never a crashed run). An unguarded write
     used to kill the whole run with zero trace, silently starving every
-    project discovered after this one (2026-09-14: the two yilian projects
+    project discovered after this one (e.g. downstream projects
     for ~10h while the alphabetically first project kept collecting)."""
     config_path = Path(config_path)
     started = time.time()

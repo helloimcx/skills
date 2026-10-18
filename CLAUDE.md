@@ -10,7 +10,7 @@ This is a **skills project collection** (技能项目合集) for creating and ma
 
 **IMPORTANT:** This is a development workspace. Follow this workflow when creating or modifying skills:
 
-1. **Create/Modify** - Create or edit skill files in the current directory (`/Users/mochuxian/code/skills/`)
+1. **Create/Modify** - Create or edit skill files in the current repository directory
 2. **Review** - Wait for user confirmation before proceeding
 3. **Install** - Only after user confirms, install the skill to Claude
 

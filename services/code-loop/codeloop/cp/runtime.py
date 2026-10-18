@@ -185,7 +185,7 @@ def _load_coordinator_config(cfg, config_dir):
     # unconditionally keeps the two consumers on one partition.
     cfg['project_key'] = config_dir.name
     cfg.setdefault('base', 'main')
-    cfg.setdefault('branch_prefixes', ['feature/mocx/', 'fix/mocx/'])
+    cfg.setdefault('branch_prefixes', ['feature/', 'fix/'])
     cfg.setdefault('verification', [])
     cfg.setdefault('interpreter', None)
     cfg.setdefault('required_checks', [])

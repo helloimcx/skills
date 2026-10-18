@@ -188,8 +188,8 @@
   </div>
   <div class="d-flex align-items-center gap-2 ms-auto flex-wrap">
     <select id="proj-filter" class="form-select form-select-sm" style="width:auto">
-      <option value="">全部项目</option><option>mocx__skills</option>
-      <option>yilian__ai_vector</option><option>yilian__ai_quality_analysis</option></select>
+      <option value="">全部项目</option><option>demo__skills</option>
+      <option>demo__vector</option><option>demo__qa</option></select>
     <button id="collect-btn" class="btn btn-sm btn-outline-primary"
     title="从平台重新拉取数据（只读操作）">立即采集</button>
     <span id="fresh" class="small text-body-secondary">加载中…</span>
@@ -263,8 +263,8 @@
       <span class="fchip" data-oc="FALSE_POSITIVE_NOOP">误报未动</span>
       <span class="fchip" data-oc="FAILED">失败</span>
       <select id="op-proj" class="form-select form-select-sm" style="width:auto">
-        <option value="all">全部项目</option><option>mocx__skills</option>
-        <option>yilian__ai_vector</option><option value="none">（机器全局）</option></select>
+        <option value="all">全部项目</option><option>demo__skills</option>
+        <option>demo__vector</option><option value="none">（机器全局）</option></select>
       <input id="op-q" class="form-control form-control-sm" style="width:190px" placeholder="搜信号 / 诊断 / 动作…">
     </div>
     <div class="card" style="padding:0;overflow:hidden">
@@ -302,7 +302,7 @@
     <h2 class="section">循环活动</h2><div id="loop-cards" class="cards"></div>
     <h2 class="section">Control Plane 运行时
       <select class="form-select form-select-sm d-inline-block w-auto align-middle ms-2">
-        <option>mocx__skills</option><option>yilian__ai_vector</option></select></h2>
+        <option>demo__skills</option><option>demo__vector</option></select></h2>
     <div class="card" id="runtime"></div>
   </section>
 
@@ -371,14 +371,14 @@ function ocHtml(key){return '<span class="oc '+key+'"><span class="dot"></span>'
 // ===================== 干预台账数据（GET /api/operator 假数据） =====================
 const OPS=[
  {id:'operator:9f2ab041c7d5e83a90b1c7',signal:{source:'alert',kind:'loop_stall',
-   key:'loop_stall|mocx__skills|handler',org_repo:'mocx__skills',severity:'high',
-   message:'mocx__skills handler 距上次活动 7.5h（阈值 7.5h）'},
+   key:'loop_stall|demo__skills|handler',org_repo:'demo__skills',severity:'high',
+   message:'demo__skills handler 距上次活动 7.5h（阈值 7.5h）'},
   agent:'claude',model:null,started_at:'09-30 16:42',duration_s:642,state:'SUCCEEDED',outcome:'RESOLVED',
   diagnosis:'handler 队列头部 repair:617 的 worktree 残留占用 path:* 锁——前轮进程死后未回收；重发指令后新轮正常接管',
   actions:[{verb:'command_resend',target:'repair_round #617'},{verb:'no_op',target:'—'}],
   evidence:[{kind:'command',ref:'指令 #941 重发'},{kind:'run',ref:'接管轮 6149…'}]},
  {id:'operator:5c1e77a2b3d4',signal:{source:'alert',kind:'worker_stall',
-   key:'worker_stall|GPU-02|reviewer',org_repo:'yilian__ai_vector',severity:'high',
+   key:'worker_stall|GPU-02|reviewer',org_repo:'demo__vector',severity:'high',
    message:'GPU-02 reviewer 应动未动：READY 已等待 4.2h'},
   agent:'opencode',model:'kimi-for-coding/k3',started_at:'09-30 15:10',duration_s:1130,
   state:'SUCCEEDED',outcome:'MITIGATED_WATCHING',
@@ -386,7 +386,7 @@ const OPS=[
   actions:[{verb:'sweep_expired',target:'3 条过期租约'},{verb:'gitea_create_issue',target:'issue #308'}],
   evidence:[{kind:'issue',ref:'#308 僵尸槽位复发'}]},
  {id:'operator:b8d3f0a19c',signal:{source:'alert',kind:'pr_blocked',
-   key:'pr_blocked|mocx__skills|253',org_repo:'mocx__skills',severity:'mid',
+   key:'pr_blocked|demo__skills|253',org_repo:'demo__skills',severity:'mid',
    message:'PR #253 判词 Blocked：base-defect 红门禁（GBK 编码 9 文件）'},
   agent:'claude',model:null,started_at:'09-30 11:05',duration_s:877,state:'SUCCEEDED',
   outcome:'ESCALATED_HUMAN',
@@ -394,7 +394,7 @@ const OPS=[
   actions:[{verb:'escalate_human',target:'issue #306 [❓needs-human]'}],
   evidence:[{kind:'issue',ref:'#306 base-defect 修复方案'}]},
  {id:'operator:e07f3c55',signal:{source:'cp_event',kind:'sync.failed',
-   key:'sync.failed|mocx__skills|EXAM_INVALID',org_repo:'mocx__skills',severity:'high',
+   key:'sync.failed|demo__skills|EXAM_INVALID',org_repo:'demo__skills',severity:'high',
    message:'EXAM_INVALID：考题 schema verification_fast 未识别'},
   agent:'claude',model:null,started_at:'09-30 09:20',duration_s:503,state:'SUCCEEDED',
   outcome:'MITIGATED_WATCHING',
@@ -402,7 +402,7 @@ const OPS=[
   actions:[{verb:'gitea_comment_issue',target:'issue #287 进度评论'},{verb:'no_op',target:'—'}],
   evidence:[{kind:'issue',ref:'#287'}]},
  {id:'operator:a3ba90ee',signal:{source:'alert',kind:'lease_expired',
-   key:'lease_expired|mocx__skills|reviewer',org_repo:'mocx__skills',severity:'low',
+   key:'lease_expired|demo__skills|reviewer',org_repo:'demo__skills',severity:'low',
    message:'reviewer 租约过期告警连续 3 次'},
   agent:'pi',model:null,started_at:'09-30 08:44',duration_s:214,state:'SUCCEEDED',
   outcome:'FALSE_POSITIVE_NOOP',
@@ -415,8 +415,8 @@ const OPS=[
   actions:[{verb:'no_op',target:'—'}],evidence:[],
   note:'下午手动合了两个 PR，帮我整体巡一遍确认没有遗留卡点'},
  {id:'operator:f1a0d2b8',signal:{source:'alert',kind:'loop_stall',
-   key:'loop_stall|yilian__ai_vector|reviewer',org_repo:'yilian__ai_vector',severity:'high',
-   message:'yilian__ai_vector reviewer 距上次活动 9.1h'},
+   key:'loop_stall|demo__vector|reviewer',org_repo:'demo__vector',severity:'high',
+   message:'demo__vector reviewer 距上次活动 9.1h'},
   agent:'claude',model:null,started_at:'09-30 16:55',duration_s:null,state:'RUNNING',outcome:null,
   diagnosis:null,actions:[],evidence:[]},
  {id:'operator:7e22c4d9',signal:{source:'watchdog',kind:'watchdog_spawn',
@@ -428,7 +428,7 @@ const OPS=[
 
 // run 详情数据：时间线 + 会话流（终稿会话静态；RUNNING 用 LIVE 脚本流式追加）
 const RUN_TL={
- operator:{claimed:'execution.claimed（worker=DESKTOP-MOCX/operator，ttl=300s）',
+ operator:{claimed:'execution.claimed（worker=RUNNER-HOST/operator，ttl=300s）',
    spawned:'command.dispatched → agent spawn（claude -p headless）',
    report:'report 校验通过（动作 ⊆ 白名单、结局枚举合法、审计对账一致）→ 终态推导'},
  loop:{claimed:'execution.claimed（loop=reviewer，ttl=300s）',
@@ -438,7 +438,7 @@ const RUN_TL={
    report:'report APPROVE(edit_pr) → publish SENT'}};
 const SESSION_DONE=[
  ['text','读取 operator.md 规则文档，确认信号查证路径与白名单边界。'],
- ['tool','control_plane.py status --project mocx__skills'],
+ ['tool','control_plane.py status --project demo__skills'],
  ['think','handler 最后活动 09-30 09:12；work_items READY=1 但无活跃执行——怀疑环境侧卡死。'],
  ['tool','sqlite3 state/control-plane.sqlite "select * from executions where state=\'RUNNING\'"'],
  ['text','发现 repair:617 残留执行：进程已死、租约未到期、worktree 未清理，占 path:* 锁。'],
@@ -446,8 +446,8 @@ const SESSION_DONE=[
  ['text','符合白名单 command_resend：重发 repair_round 指令，新轮接管后旧锁随 sweep 释放。'],
  ['text','复核：新执行已 claim，流式正常。报告结论 RESOLVED。']];
 const LIVE_SCRIPT=[
- ['text','读取 operator.md，开始查证 loop_stall · yilian__ai_vector · reviewer。'],
- ['tool','dashboard.py status --project yilian__ai_vector'],
+ ['text','读取 operator.md，开始查证 loop_stall · demo__vector · reviewer。'],
+ ['tool','dashboard.py status --project demo__vector'],
  ['think','reviewer 上轮 07:44 结束后无新执行；READY 队列 2 项在等——符合「应动未动」。'],
  ['tool','GET /api/workers → GPU-02 reviewer worker last_seen=07:58'],
  ['text','疑似 worker agent 掉线或槽位占满，继续查 CP 侧租约与槽位占用…'],
@@ -481,12 +481,12 @@ function goRun(id){location.hash='view=run&exec='+encodeURIComponent(id)}
 
 // ===================== 告警条 =====================
 const ALERTS=[
- {sev:'err',rule:'worker_stall',proj:'yilian__ai_vector',msg:'GPU-02 reviewer 应动未动（READY 等待 4.2h）',go:'loops'},
- {sev:'warn',rule:'loop_stall',proj:'yilian__ai_vector',msg:'reviewer 距上次活动 9.1h',go:'loops'},
- {sev:'warn',rule:'pr_blocked',proj:'mocx__skills',msg:'PR #253 Blocked：base-defect 红门禁',go:'kanban'},
- {sev:'warn',rule:'lease_expired',proj:'mocx__skills',msg:'reviewer 租约过期（下轮 claim 自动接管）',go:'kanban'},
+ {sev:'err',rule:'worker_stall',proj:'demo__vector',msg:'GPU-02 reviewer 应动未动（READY 等待 4.2h）',go:'loops'},
+ {sev:'warn',rule:'loop_stall',proj:'demo__vector',msg:'reviewer 距上次活动 9.1h',go:'loops'},
+ {sev:'warn',rule:'pr_blocked',proj:'demo__skills',msg:'PR #253 Blocked：base-defect 红门禁',go:'kanban'},
+ {sev:'warn',rule:'lease_expired',proj:'demo__skills',msg:'reviewer 租约过期（下轮 claim 自动接管）',go:'kanban'},
  {sev:'info',rule:'machine_disabled',proj:'（机器）',msg:'dev-b 已停用',go:'loops'},
- {sev:'info',rule:'operator_running',proj:'yilian__ai_vector',msg:'operator 巡检运行中（loop_stall 信号）',go:'operator'}];
+ {sev:'info',rule:'operator_running',proj:'demo__vector',msg:'operator 巡检运行中（loop_stall 信号）',go:'operator'}];
 $('#alert-items').innerHTML=ALERTS.slice(0,3).map(a=>
   '<span class="sev-dot sev-'+a.sev+'"></span>'+esc(a.rule)+' · '+esc(a.proj)).join('　')+' …';
 function closeAlertPanel(){$('#alert-panel').hidden=true;$('#alertbar').setAttribute('aria-expanded','false')}
@@ -514,16 +514,16 @@ $('#kanban-strip').innerHTML=
 const KCOLS=[
  {cls:'k-ready',name:'待处理 Issue',cards:[
    {t:'#306 [❓needs-human] base-defect 修复方案（operator 升级）',s:['main','2h'],chips:[['warn','待决策'],['mut','operator 建']]},
-   {t:'#307 handler 队列卡死恢复复盘',s:['feature/mocx/…','5h'],chips:[['mut','open']]},
+   {t:'#307 handler 队列卡死恢复复盘',s:['feature/…','5h'],chips:[['mut','open']]},
    {t:'#309 query-logs debug 链路文档补充',s:['docs','1d'],chips:[['mut','open']]},
    {t:'#310（ai_vector）reviewer 槽位上限调优',s:['config','1d'],chips:[['mut','open']]}]},
  {cls:'k-run',name:'处理中',cards:[
    {t:'repair:284 PR#284 review-fix（probe 解除冷却死锁）',s:['review-pr-284','进行中 42m'],chips:[['acc','handler']]},
    {t:'ISSUE_IMPLEMENTATION #309',s:['issue-309','进行中 18m'],chips:[['acc','handler']]}]},
  {cls:'k-review',name:'待评审',cards:[
-   {t:'#285 PR_REVIEW_FIX 临时修复分支 publish 推回原分支',s:['fix/mocx/pr-review-fix','3h'],chips:[['mut','mergeable']]},
-   {t:'#287 考题 verification_fast 兼容',s:['feature/mocx/exam-keys','6h'],chips:[['err','base-defect']]},
-   {t:'#288 dash 告警深链整理',s:['feature/mocx/alert-links','8h'],chips:[['mut','mergeable']]}]},
+   {t:'#285 PR_REVIEW_FIX 临时修复分支 publish 推回原分支',s:['fix/pr-review-fix','3h'],chips:[['mut','mergeable']]},
+   {t:'#287 考题 verification_fast 兼容',s:['feature/exam-keys','6h'],chips:[['err','base-defect']]},
+   {t:'#288 dash 告警深链整理',s:['feature/alert-links','8h'],chips:[['mut','mergeable']]}]},
  {cls:'k-reviewing',name:'审核中',cards:[
    {t:'review:285 评审 PR#285',s:['exec 3f8b11ad…','流式进行中'],chips:[['acc','reviewer']],run:'3f8b11ad90c1d2e3f4a5b6c7d8e9f001'}]},
  {cls:'k-blocked',name:'待决策',cards:[
@@ -548,13 +548,13 @@ renderBoard();
 
 // ===================== 执行历史（简化） =====================
 const HIST=[
- {id:'3f8b11ad90c1d2e3f4a5b6c7d8e9f001',kind:'loop',loop:'review_round',project:'mocx__skills',
+ {id:'3f8b11ad90c1d2e3f4a5b6c7d8e9f001',kind:'loop',loop:'review_round',project:'demo__skills',
   title:'看板触发审核 PR #285（手动触发）',state:'RUNNING',agent:'claude',at:'09-30 16:58',dur:null},
- {id:'operator:f1a0d2b8',kind:'operator',loop:'operator',project:'yilian__ai_vector',
+ {id:'operator:f1a0d2b8',kind:'operator',loop:'operator',project:'demo__vector',
   title:'loop_stall 巡检（reviewer 9.1h 无活动）',state:'RUNNING',agent:'claude',at:'09-30 16:55',dur:null},
- {id:'operator:9f2ab041c7d5e83a90b1c7',kind:'operator',loop:'operator',project:'mocx__skills',
+ {id:'operator:9f2ab041c7d5e83a90b1c7',kind:'operator',loop:'operator',project:'demo__skills',
   title:'loop_stall 巡检（handler 7.5h）→ RESOLVED',state:'SUCCEEDED',agent:'claude',at:'09-30 16:42',dur:642},
- {id:'exec_6149',kind:'loop',loop:'handler',project:'mocx__skills',
+ {id:'exec_6149',kind:'loop',loop:'handler',project:'demo__skills',
   title:'repair:617 接管轮（operator 重发指令）',state:'SUCCEEDED',agent:'claude',at:'09-30 16:20',dur:511},
  {id:'zcode:sess_9b93ddb3',kind:'agent',platform:'zcode',project:'（交互会话）',
   title:'vibe-coding 复杂任务：operator 方案规划',state:'completed',agent:'zcode',at:'09-30 14:05',dur:4210},
@@ -622,12 +622,12 @@ function renderRun(exec){
     const r=OPS.find(x=>x.id===exec);
     if(!r){d.innerHTML='<div class="card">未找到 '+esc(exec)+'（演示数据仅含台账行）</div>';return}
     const s=r.signal,running=r.state==='RUNNING';
-    const tl=[['16:55:03','command.enqueued','action=operator_round · target=DESKTOP-MOCX',1],
+    const tl=[['16:55:03','command.enqueued','action=operator_round · target=RUNNER-HOST',1],
               ['16:55:03','command.dispatched','推活 serve 主机 worker agent',1],
               ['16:55:05','execution.claimed','kind=operator · ttl=300s · 无 worktree/bind',1],
               ['16:55:06','spawn','claude -p headless · 轮日志 executions/f1a0….log',1]];
     const evid=[['信号',s.severity==='high'?'err':s.severity==='mid'?'warn':'mut',s.kind+' · '+s.key],
-                ['worker','mut','@DESKTOP-MOCX/operator · agent='+r.agent+(r.model?' · '+r.model:'')]];
+                ['worker','mut','@RUNNER-HOST/operator · agent='+r.agent+(r.model?' · '+r.model:'')]];
     let sess=[];
     if(running){tl.push(['…','（进行中）','report 未到 · 租约续期中',0]);}
     else if(r.state==='FAILED'){
@@ -646,7 +646,7 @@ function renderRun(exec){
       +'<div class="card rd-head"><div class="title">'
       +'<div class="rd-h1"><span class="n">'+esc(r.id)+'</span>'+esc(s.message)+'</div>'
       +'<div class="rd-meta"><span><b>'+(s.org_repo||'机器全局')+'</b></span>'
-      +'<span>worker <b>@DESKTOP-MOCX/operator</b></span>'
+      +'<span>worker <b>@RUNNER-HOST/operator</b></span>'
       +'<span class="chip acc">'+esc(s.kind)+'</span>'
       +'<span class="chip mut">'+esc(r.agent)+(r.model?' · '+esc(r.model):'')+'</span>'
       +'<span class="mono">'+r.started_at+' · '+dur(r.duration_s)+'</span></div></div>'
@@ -685,15 +685,15 @@ function renderRun(exec){
     }
   }else{
     // 循环轮：同一组件换数据（证明 operator 轮与循环轮进的是同一个 view=run）
-    const fake=HIST.find(x=>x.id===exec)||{id:exec,loop:'review_round',project:'mocx__skills',
+    const fake=HIST.find(x=>x.id===exec)||{id:exec,loop:'review_round',project:'demo__skills',
       title:'循环轮执行',state:'RUNNING',agent:'claude',at:'09-30 16:58'};
     const sc=STATE_CHIP[fake.state]||STATE_CHIP.RUNNING;
     d.innerHTML=rdCrumbs('执行历史','history.back()','#view=run&exec='+fake.id.slice(0,12)+'…')
       +'<div class="card rd-head"><div class="title">'
       +'<div class="rd-h1"><span class="n">#285</span>'+esc(fake.title)+'</div>'
       +'<div class="rd-meta"><span><b>'+esc(fake.project)+'</b></span>'
-      +'<span>worker <b>@DESKTOP-MOCX/reviewer</b></span>'
-      +'<span class="chip acc mono">fix/mocx/pr-review-fix</span>'
+      +'<span>worker <b>@RUNNER-HOST/reviewer</b></span>'
+      +'<span class="chip acc mono">fix/pr-review-fix</span>'
       +'<span class="mono">'+fake.at+'</span></div></div>'
       +'<div class="rd-right"><div class="rd-chips">'
       +'<span class="statechip '+sc[0]+'">'+sc[1]+'</span>'
@@ -760,9 +760,9 @@ $('#op-src').onchange=renderOps;$('#op-proj').onchange=renderOps;$('#op-q').onin
 
 // ===================== 项目（简化） =====================
 $('#project-cards').innerHTML=[
- {n:'mocx__skills',s:['Issue 14 open','PR 3 open','采集 2m 前'],chips:[['ok','已启用'],['mut','remote']]},
- {n:'yilian__ai_vector',s:['Issue 9 open','PR 1 open','采集 2m 前'],chips:[['ok','已启用'],['mut','remote']]},
- {n:'yilian__ai_quality_analysis',s:['Issue 4 open','PR 0 open','采集 3m 前'],chips:[['ok','已启用'],['mut','单机']]}]
+ {n:'demo__skills',s:['Issue 14 open','PR 3 open','采集 2m 前'],chips:[['ok','已启用'],['mut','remote']]},
+ {n:'demo__vector',s:['Issue 9 open','PR 1 open','采集 2m 前'],chips:[['ok','已启用'],['mut','remote']]},
+ {n:'demo__qa',s:['Issue 4 open','PR 0 open','采集 3m 前'],chips:[['ok','已启用'],['mut','单机']]}]
  .map(p=>'<div class="card"><div class="t">'+esc(p.n)+'</div><div class="s">'
   +p.s.map(x=>'<span>'+esc(x)+'</span>').join('')+'</div><div style="margin-top:.3rem">'
   +p.chips.map(c=>'<span class="chip '+c[0]+'">'+esc(c[1])+'</span>').join('')+'</div></div>').join('');
@@ -778,10 +778,10 @@ function miniTable(head,rows){
    +head.map(h=>'<th>'+esc(h)+'</th>').join('')+'</tr></thead><tbody>'
    +rows.map(r=>'<tr>'+r.map(c=>'<td>'+c+'</td>').join('')+'</tr>').join('')+'</tbody></table></div>'}
 $('#pr-table').innerHTML=miniTable(['#','标题','分支','状态','更新'],
- [['<span class="mono">285</span>','PR_REVIEW_FIX 临时修复分支 publish 推回原分支','<span class="mono">fix/mocx/pr-review-fix</span>','<span class="chip ok">可合并</span>','3h'],
-  ['<span class="mono">284</span>','blocked-escalation 收紧判据','<span class="mono">feature/mocx/blocked-escalation</span>','<span class="chip acc">审核中</span>','2h'],
-  ['<span class="mono">287</span>','考题 verification_fast 兼容','<span class="mono">feature/mocx/exam-keys</span>','<span class="chip err">base-defect</span>','6h'],
-  ['<span class="mono">288</span>','dash 告警深链整理','<span class="mono">feature/mocx/alert-links</span>','<span class="chip ok">可合并</span>','8h']]);
+ [['<span class="mono">285</span>','PR_REVIEW_FIX 临时修复分支 publish 推回原分支','<span class="mono">fix/pr-review-fix</span>','<span class="chip ok">可合并</span>','3h'],
+  ['<span class="mono">284</span>','blocked-escalation 收紧判据','<span class="mono">feature/blocked-escalation</span>','<span class="chip acc">审核中</span>','2h'],
+  ['<span class="mono">287</span>','考题 verification_fast 兼容','<span class="mono">feature/exam-keys</span>','<span class="chip err">base-defect</span>','6h'],
+  ['<span class="mono">288</span>','dash 告警深链整理','<span class="mono">feature/alert-links</span>','<span class="chip ok">可合并</span>','8h']]);
 $('#issue-table').innerHTML=miniTable(['#','标题','标签','等待'],
  [['<span class="mono">306</span>','[❓needs-human] base-defect 修复方案 <span class="chip mut" style="margin-left:.4rem">operator 升级</span>','<span class="chip warn">待决策</span>','2h'],
   ['<span class="mono">307</span>','handler 队列卡死恢复复盘','<span class="chip mut">open</span>','5h'],
@@ -789,7 +789,7 @@ $('#issue-table').innerHTML=miniTable(['#','标题','标签','等待'],
 
 // ===================== 循环（机器卡 = operator 触发入口之一） =====================
 $('#machines').innerHTML=
- '<div class="card"><div class="t">DESKTOP-MOCX（serve 主机）</div>'
+ '<div class="card"><div class="t">RUNNER-HOST（serve 主机）</div>'
 +'<div class="s"><span>last_seen 刚刚</span><span>loops: discover/handler/reviewer</span></div>'
 +'<div style="margin-top:.3rem"><span class="chip ok">在线</span><span class="chip acc">operator 执行位</span>'
 +'<span class="chip ok">健康</span></div></div>'
@@ -806,7 +806,7 @@ $('#loop-cards').innerHTML=[
  .map(l=>'<div class="card"><div class="t">'+l.n+'</div><div class="s">'
   +l.s.map(x=>'<span>'+esc(x)+'</span>').join('')+'</div>'
   +'<div style="margin-top:.3rem"><span class="chip '+l.chip[0]+'">'+esc(l.chip[1])+'</span></div></div>').join('');
-$('#runtime').innerHTML='<div class="t">mocx__skills · CP 运行时</div><div class="s" style="margin-top:.3rem">'
+$('#runtime').innerHTML='<div class="t">demo__skills · CP 运行时</div><div class="s" style="margin-top:.3rem">'
  +'<span>slots: max_parallel=3 · 占用 1</span><span>expired=0</span><span>outbox 未决 0</span>'
  +'<span>policy 版本 v17</span></div>';
 
@@ -827,8 +827,8 @@ $('#chart-legend').innerHTML=[['discover','var(--acc)'],['handler','var(--ok)'],
 
 // ===================== 活动（含 operator.act 审计） =====================
 const EVS=[
- ['16:58','execution.claimed','mocx__skills · review:285（reviewer）','acc'],
- ['16:55','command.enqueued','operator_round · loop_stall 信号（yilian__ai_vector）','mut'],
+ ['16:58','execution.claimed','demo__skills · review:285（reviewer）','acc'],
+ ['16:55','command.enqueued','operator_round · loop_stall 信号（demo__vector）','mut'],
  ['16:52','publication.sent','PR #285 评论（reviewer 判词 Approved）','mut'],
  ['16:44','operator.report','loop_stall 巡检 → RESOLVED（command_resend repair:617）','acc'],
  ['16:42','command.enqueued','repair_round #617（operator 重发）','mut'],

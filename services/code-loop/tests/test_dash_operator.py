@@ -45,7 +45,7 @@ class MirrorTests(unittest.TestCase):
                                           now=1_000.0)
             store.db.execute('''INSERT INTO executions (id,item_id,worker,token,
                 expires_at,state,worktree,branch,head,result,item_version,created_at)
-                VALUES ('e1',?,'DESKTOP-MOCX/operator',1,?,'RUNNING',
+                VALUES ('e1',?,'runner-host/operator',1,?,'RUNNING',
                 NULL,NULL,NULL,NULL,'v',?)''',
                 (item['id'], time.time() + 999.0, time.time()))
             collect.collect_operator(self.db, home=self.home)

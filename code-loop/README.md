@@ -53,3 +53,8 @@ npx skills add helloimcx/skills --skill code-loop
 - Claude Code: `~/.claude/skills/code-loop/`
 - Codex: `~/.codex/skills/code-loop/`
 - Antigravity: `~/.gemini/config/skills/code-loop/`
+
+> **说明**：当单独拷贝技能目录到其他环境时，由于脱离了仓库目录结构，必须通过以下方式之一让 Shim 定位到 `services/code-loop` 服务（否则会触发 `SERVICE_NOT_FOUND` fail-closed）：
+> 1. 执行一次钉扎：`python <repo>/services/code-loop/scripts/register_home.py`（写入 `~/.code-loop/service.home`）
+> 2. 或配置环境变量：`export CODE_LOOP_SERVICE=<path/to/services/code-loop>`
+

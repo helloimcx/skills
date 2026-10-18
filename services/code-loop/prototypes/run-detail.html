@@ -128,7 +128,7 @@ footer{margin-top:26px;font-size:12px;color:var(--mut)}
     <span class="mut">审核中</span>
     <span class="mut">/</span>
     <b>运行详情</b>
-    <span class="mono mut" id="hash-hint">#p=mocx__skills&amp;view=run&amp;exec=b0e7b8a1…</span>
+    <span class="mono mut" id="hash-hint">#p=demo__skills&amp;view=run&amp;exec=b0e7b8a1…</span>
   </div>
 
   <!-- 入口演示：看板·审核中列的卡片长这样，点击它即进入本页 -->
@@ -137,10 +137,10 @@ footer{margin-top:26px;font-size:12px;color:var(--mut)}
     <div class="qcard" onclick="pulse()" title="点击模拟跳转运行详情">
       <div class="t"><span class="mono" style="color:var(--acc)">#184</span> 读端点 HTTP gzip 压缩</div>
       <div class="m">
-        <span>mocx/skills</span><span>@DESKTOP-4K/reviewer</span><span>2 分钟前</span>
-        <span class="chip acc mono">fix/mocx/dash-gzip</span>
+        <span>demo/skills</span><span>@worker-01/reviewer</span><span>2 分钟前</span>
+        <span class="chip acc mono">fix/dash-gzip</span>
       </div>
-      <div class="m small mut mono" title="worktree">D:\ai\skills-worktrees\review-pr-184</div>
+      <div class="m small mut mono" title="worktree">/workspace/worktrees/review-pr-184</div>
     </div>
   </div>
 
@@ -149,10 +149,10 @@ footer{margin-top:26px;font-size:12px;color:var(--mut)}
     <div class="title">
       <h1><span class="n">#184</span>读端点 HTTP gzip 压缩——/api/items 3.1MB、/api/kanban 765KB 载荷 ~10x 缩减</h1>
       <div class="meta" style="margin-top:6px">
-        <span><b>mocx/skills</b></span>
-        <span>worker <b>@DESKTOP-4K/reviewer</b></span>
-        <span class="chip acc mono" title="PR 分支">fix/mocx/dash-gzip</span>
-        <span class="mono mut" title="worktree">D:\ai\skills-worktrees\review-pr-184</span>
+        <span><b>demo/skills</b></span>
+        <span>worker <b>@worker-01/reviewer</b></span>
+        <span class="chip acc mono" title="PR 分支">fix/dash-gzip</span>
+        <span class="mono mut" title="worktree">/workspace/worktrees/review-pr-184</span>
       </div>
     </div>
     <div style="display:flex;flex-direction:column;gap:6px;align-items:flex-end">
@@ -212,10 +212,10 @@ footer{margin-top:26px;font-size:12px;color:var(--mut)}
     <summary style="cursor:pointer;font-weight:600">接口契约速览（实现须与本页交互一致；实现前可忽略）</summary>
     <p class="mut" style="font-size:12.5px">GET <span class="mono">/api/run?org=&lt;org_repo&gt;&amp;exec=&lt;execution_id&gt;&amp;since=&lt;byte_offset&gt;</span></p>
     <pre>{
-  "execution": {"id":"b0e7…","state":"RUNNING","worker":"DESKTOP-4K/reviewer",
-                "branch":"fix/mocx/dash-gzip","worktree":"D:\\ai\\skills-worktrees\\review-pr-184",
+  "execution": {"id":"b0e7…","state":"RUNNING","worker":"worker-01/reviewer",
+                "branch":"fix/dash-gzip","worktree":"/workspace/worktrees/review-pr-184",
                 "created_at":1758096062.1,"expires_at":1758096362.1},
-  "session": {"bound":"exact","path":"~/.claude/projects/D--ai-skills/cbeb….jsonl",
+  "session": {"bound":"exact","path":"~/.claude/projects/repo-skills/cbeb….jsonl",
               "size":913855,"offset":402113,
               "events":[{"t":1758096721.4,"text":"$ gitea diff 184",
                          "out":"+ def _write_body(…)…","mono":true,"status":null},

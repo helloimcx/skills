@@ -152,9 +152,9 @@
       <h3>待人工合并 1</h3>
       <div class="card" id="readyCard">
         <div class="t">#225 feat(service-graph): 读写闭环增强——agent 写回义务确定性落地</div>
-        <div class="m"><span class="mono">mocx/skills</span>
-          <span class="mono">feature/mocx/service-graph-writeback</span>
-          <span>结论后 3.5 小时</span><span>结论人 mocx</span></div>
+        <div class="m"><span class="mono">demo/skills</span>
+          <span class="mono">feature/service-graph-writeback</span>
+          <span>结论后 3.5 小时</span><span>结论人 reviewer</span></div>
         <div class="row" id="readyChips">
           <span class="chip ok">可合并✓</span><span class="chip err">有冲突</span>
           <span class="chip acc">#225 相关 issue chip 位</span></div>
@@ -170,12 +170,12 @@
     <div class="col k-run">
       <h3>处理中 1（新增实时投影）</h3>
       <div class="card exec" id="runCard" style="display:none"
-           onclick="location.hash='演示：跳转 #p=mocx__skills&view=run&exec=9f2e…'">
+           onclick="location.hash='演示：跳转 #p=demo__skills&view=run&exec=9f2e…'">
         <div class="t">#225 feat(service-graph): 读写闭环增强…</div>
-        <div class="m"><span class="mono">mocx/skills</span><span>@DESKTOP-01</span>
+        <div class="m"><span class="mono">demo/skills</span><span>@runner-01</span>
           <span>2 分钟前</span><span class="chip acc mono">repair:225</span></div>
-        <div class="row"><span class="chip mono">fix/mocx/repair-pr-225</span></div>
-        <div class="wt mono" title="worktree">worktree: D:/ai/skills-worktrees/re…</div>
+        <div class="row"><span class="chip mono">fix/repair-pr-225</span></div>
+        <div class="wt mono" title="worktree">worktree: /workspace/worktrees/repair-pr-225</div>
       </div>
       <p class="hint" id="runHint">点击「触发修复」后，修复执行卡即时出现在这里（live CP 投影，fresh=1 不等采集）；<b>整卡点击进运行详情</b>（view=run，复用 run-detail 原型契约：会话流平铺 + CP 时间线兜底）。</p>
     </div>
@@ -184,7 +184,7 @@
       <h3>block 0</h3>
       <div class="card" id="blockedCard" style="display:none">
         <div class="t">#225 feat(service-graph): 读写闭环增强…</div>
-        <div class="m"><span class="mono">mocx/skills</span><span class="chip err">Blocked</span></div>
+        <div class="m"><span class="mono">demo/skills</span><span class="chip err">Blocked</span></div>
         <details class="fold"><summary class="mut" style="cursor:pointer;font-size:12px">阻塞原因（评审结论）</summary>
           <pre class="mono" style="font-size:11px;white-space:pre-wrap">冲突文件语义无法可靠判断（service_graph.db 归属双方各执一词），需裁决：rebase / 关闭 / 作者重做。已按契约留痕评论。</pre></details>
       </div>
@@ -195,7 +195,7 @@
   <h2>② 按钮生命周期（对话确认后）</h2>
   <div class="lifecycle">
     <div class="step"><span class="st">下发中</span><button class="btn" disabled>下发中…</button></div>
-    <div class="step"><span class="st">已派发</span><button class="btn" disabled>已派发 DESKTOP-01 ✓</button></div>
+    <div class="step"><span class="st">已派发</span><button class="btn" disabled>已派发 runner-01 ✓</button></div>
     <div class="step"><span class="st">运行中</span><button class="btn" disabled>修复中…</button>
       <span class="hint">「处理中」列出现 repair:225 执行卡，本卡按钮禁用</span></div>
     <div class="step"><span class="st">成功</span><button class="btn" disabled>触发修复</button>
@@ -302,7 +302,7 @@ function setEdge(next){
   edge = next; paint();
   if (next === 'running')
     document.getElementById('runHint').innerHTML =
-      '现在点这张执行卡 → <code>#p=mocx__skills&amp;view=run&amp;exec=…</code>（运行详情，复用 run-detail 原型契约）';
+      '现在点这张执行卡 → <code>#p=demo__skills&amp;view=run&amp;exec=…</code>（运行详情，复用 run-detail 原型契约）';
 }
 
 // ---- 对话框（与 review-trigger-options 同构：卡片载荷驱动 + 两条降级） ----
@@ -363,7 +363,7 @@ function onAgentChange(){
 function confirmDispatch(){
   const agent = selectedAgent();
   const model = document.getElementById('modelSel').value;
-  const body = {project: 'mocx__skills', number: 225};
+  const body = {project: 'demo__skills', number: 225};
   if (agent) body.agent = agent;
   if (agent && model) body.model = model;
   const hint = document.getElementById('dlgHint');

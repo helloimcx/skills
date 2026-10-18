@@ -50,7 +50,7 @@ const displayProject = p => {
   if (!s) return '—';
   const known = (DATA.ov?.projects || []).find(x => x.org_repo === s);
   if (known) return known.repo;
-  if (/^[a-zA-Z]:[\\/]/.test(s)){   // 裸文件系统路径（D:\ai\skills）
+  if (/^[a-zA-Z]:[\\/]/.test(s)){   // 裸文件系统路径（例如 D:\projects\skills）
     const leaf = s.replace(/[\\/]+$/, '').split(/[\\/]/).pop();
     return leaf ? leaf + '（本地项目）' : s;
   }

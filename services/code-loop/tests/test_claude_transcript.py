@@ -96,11 +96,11 @@ class RunlogTest(unittest.TestCase):
             os.utime(p, (mtime, mtime))
         return p
 
-    # ---- munged directory name (observed: D:\ai\skills -> D--ai-skills) ----
+    # ---- munged directory name (e.g. D:\projects\skills -> D--projects-skills) ----
     def test_munged_dir_name(self):
-        self.assertEqual(runlog.munged('D:\\ai\\skills'), 'D--ai-skills')
-        self.assertEqual(runlog.munged('D:\\ai\\ai_quality_analysis'),
-                         'D--ai-ai-quality-analysis')
+        self.assertEqual(runlog.munged('D:\\projects\\skills'), 'D--projects-skills')
+        self.assertEqual(runlog.munged('D:\\projects\\quality_analysis'),
+                         'D--projects-quality-analysis')
 
     # ---- parsing: full-content flat events, no category labels ----
     def test_tail_parses_events_in_order(self):

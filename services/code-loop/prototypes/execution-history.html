@@ -81,8 +81,8 @@
   <div class="sub">循环轮次（CP executions）与交互会话子代理（agent_runs 档案）的统一列表 · 点击行查看详情</div>
 
   <div class="bar">
-    <select id="fProject"><option>全部项目（含未注册）</option><option>mocx__skills</option>
-      <option>yilian__ai_quality_analysis</option><option>D:\ai\ai-portal-service（未注册）</option></select>
+    <select id="fProject"><option>全部项目（含未注册）</option><option>demo__skills</option>
+      <option>org__quality_analysis</option><option>D:\projects\portal-service（未注册）</option></select>
     <span class="chip on" data-src="all">全部</span>
     <span class="chip" data-src="loop">循环轮次</span>
     <span class="chip" data-src="agent">子代理档案</span>
@@ -113,32 +113,32 @@
 
 <script>
 const DATA = [
- {grp:'vibe-coding 并行规划 ×3 · D:\\ai\\ai-portal-service（未注册） · 09-21 09:57', n:3},
- {id:'zcode:sess_subagent_agent_b19b',kind:'agent',platform:'zcode',project:'D:\\ai\\ai-portal-service',
+ {grp:'vibe-coding 并行规划 ×3 · D:\\projects\\portal-service（未注册） · 09-21 09:57', n:3},
+ {id:'zcode:sess_subagent_agent_b19b',kind:'agent',platform:'zcode',project:'D:\\projects\\portal-service',
   title:'You are an independent adversarial code reviewer. Work re…',state:'completed',
   agent:'zcode',started_at:'09-21 09:57',duration_s:542,parent:true},
- {id:'zcode:sess_subagent_agent_fb5f',kind:'agent',platform:'zcode',project:'D:\\ai\\ai-portal-service',
+ {id:'zcode:sess_subagent_agent_fb5f',kind:'agent',platform:'zcode',project:'D:\\projects\\portal-service',
   title:'你是 discover loop 的 Inspection Subagent（只读，零写入…',state:'completed',
   agent:'zcode',started_at:'09-21 10:06',duration_s:1571,parent:true},
- {id:'claude:3f2a…c9#toolu_01',kind:'agent',platform:'claude',project:'D:\\ai\\ai-portal-service',
+ {id:'claude:3f2a…c9#toolu_01',kind:'agent',platform:'claude',project:'D:\\projects\\portal-service',
   title:'Architect Review：验证实现与已批准方案图一致性…',state:'error',
   agent:'claude',started_at:'09-21 10:31',duration_s:96,parent:true},
- {id:'zcode:sess_9b93ddb3',kind:'agent',platform:'zcode',project:'D:\\ai\\skills',
+ {id:'zcode:sess_9b93ddb3',kind:'agent',platform:'zcode',project:'D:\\projects\\skills',
   title:'vibe-coding 中等任务：执行历史数据面（Spec/Plan 持久化…',state:'running',
   agent:'zcode',started_at:'09-21 09:40',duration_s:null},
- {id:'exec_951c8030…',kind:'loop',loop:'review_round',platform:'—',project:'mocx__skills',
+ {id:'exec_951c8030…',kind:'loop',loop:'review_round',platform:'—',project:'demo__skills',
   title:'看板触发审核 PR #237（手动触发，adopt prepared round）',state:'SUCCEEDED',
   agent:'claude',started_at:'09-21 08:45',duration_s:411},
- {id:'exec_6149…',kind:'loop',loop:'reviewer',platform:'—',project:'mocx__skills',
+ {id:'exec_6149…',kind:'loop',loop:'reviewer',platform:'—',project:'demo__skills',
   title:'评审 PR #566（定时轮）',state:'SUCCEEDED',agent:'opencode',
   started_at:'09-21 08:45',duration_s:425},
- {id:'exec_a344…',kind:'loop',loop:'repair',platform:'—',project:'yilian__ai_quality_analysis',
+ {id:'exec_a344…',kind:'loop',loop:'repair',platform:'—',project:'org__quality_analysis',
   title:'repair:234 有冲突 PR 修复（看板触发）',state:'FAILED',agent:'pi',
   started_at:'09-21 08:36',duration_s:64},
- {id:'exec_dce…',kind:'loop',loop:'discover',platform:'—',project:'yilian__ai_quality_analysis',
+ {id:'exec_dce…',kind:'loop',loop:'discover',platform:'—',project:'org__quality_analysis',
   title:'巡检轮 R71：信号源扫描（Inspection 子代理 2 次）',state:'SUCCEEDED',
   agent:'claude',started_at:'09-21 08:06',duration_s:842},
- {id:'exec_b21…',kind:'loop',loop:'handler',platform:'—',project:'mocx__skills',
+ {id:'exec_b21…',kind:'loop',loop:'handler',platform:'—',project:'demo__skills',
   title:'ISSUE_IMPLEMENTATION #536 总览页慢查询',state:'CANCELLED',
   agent:'claude',started_at:'09-20 23:40',duration_s:1902},
 ];
