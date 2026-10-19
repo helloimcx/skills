@@ -1,3 +1,7 @@
 .claude/
 .DS_Store
 .worktrees/
+__pycache__/
+*.pyc
+*.sqlite
+.pytest_cache/

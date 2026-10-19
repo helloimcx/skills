@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<!-- 执行历史（view=history）原型 · 2026-09-21 · 修订：详情复用 view=run 组件（用户 2026-09-21 拍板）
+  需求：vibe-coding / code-loop 每次主动触发的 agent 执行过程需要保存，用户可以点击查看详情。
+  入口：dashboard 顶部导航新增「执行历史」tab；看板卡片点击保持现状（view=run）。
+  数据契约（本原型定义，实现照此）：
+    GET /api/history?project=&source=&state=&agent=&q=&limit=&offset=
+      → { total, rows:[{
+            id,            // loop: execution id(32hex) | agent: "zcode:<session_id>" / "claude:<file>#<tool_use_id>"
+            kind,          // 'loop' | 'agent'
+            loop,          // loop 行: discover/handler/reviewer/review_round/repair
+            platform,      // agent 行: zcode/claude/opencode/pi…（数据驱动，新增平台零改动）
+            project,       // org__repo 或 cwd 推导的显示名（含未注册项目）
+            title,         // 任务/轮次标题（截断展示，详情给全文）
+            state,         // 统一大写词汇：RUNNING/SUCCEEDED/FAILED/CANCELLED…（agent 档案与 loop 同一 chip 映射）
+            agent,         // loop 行取命令台账；agent 行=platform
+            started_at, duration_s
+          }],
+           agents: [...]  // agent 去重清单（按除 agent 外的过滤条件计算）——筛选下拉数据驱动填充，
+                          // 选项来自数据不硬编码（新增 agent 零改动，多 agent 兼容）}
+    行点击：两类行都进现有 view=run 运行详情组件（不另做详情页）——
+            loop 行 exec=<32hex 执行 id>；agent 行 exec=<平台:会话id>（bind=agent-session 子会话直读，
+            契约与变体演示见 run-detail.html 2026-09-21 更新）。
+  兼容多 agent：platform/agent 全部取自数据渲染；未实现采集适配器的平台只是不出行，不阻塞视图。
+-->
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>执行历史 · 原型</title>
+<style>
+  :root{--paper:#f4f6f8;--card:#ffffff;--ink:#16232e;--mut:#5b6b76;--line:#dde4e9;
+        --acc:#0e7490;--ok:#2f7d4f;--err:#b3372f;--warn:#9a6700;--chip:#eef3f5;}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--paper);color:var(--ink);
+       font:14px/1.5 "Segoe UI","Microsoft YaHei",sans-serif}
+  .wrap{max-width:1180px;margin:0 auto;padding:20px 24px 60px}
+  h1{font-size:18px;margin:0 0 2px}
+  .sub{color:var(--mut);font-size:12.5px;margin-bottom:16px}
+  .bar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px}
+  .bar select,.bar input{background:var(--card);border:1px solid var(--line);border-radius:6px;
+       padding:5px 9px;font:inherit;color:var(--ink)}
+  .bar input{width:220px}
+  .chip{background:var(--chip);border:1px solid var(--line);border-radius:999px;
+       padding:3px 12px;font-size:12.5px;color:var(--mut);cursor:pointer;user-select:none}
+  .chip.on{background:var(--acc);border-color:var(--acc);color:#fff}
+  table{width:100%;border-collapse:collapse;background:var(--card);
+       border:1px solid var(--line);border-radius:8px;overflow:hidden}
+  th{font-size:12px;color:var(--mut);text-align:left;font-weight:600;
+     padding:8px 10px;border-bottom:1px solid var(--line);background:#fafbfc}
+  td{padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+  tr:last-child td{border-bottom:none}
+  tbody tr{cursor:pointer}
+  tbody tr:hover{background:#f2f7f9}
+  .t{font-variant-numeric:tabular-nums;color:var(--mut);white-space:nowrap}
+  .p{font-weight:600;white-space:nowrap}
+  .title{max-width:420px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .tag{display:inline-block;border-radius:4px;padding:1px 7px;font-size:11.5px;
+       border:1px solid var(--line);background:var(--chip);color:var(--mut);margin-right:4px}
+  .tag.loop{border-color:#bcd7e0;color:var(--acc);background:#ecf4f7}
+  .tag.zcode{border-color:#cfd8dc;color:#455a64}
+  .tag.claude{border-color:#e0d3b8;color:#7a5d00;background:#faf5e6}
+  .tag.opencode{border-color:#d7cfe6;color:#5b4a8a;background:#f3effa}
+  .tag.pi{border-color:#cde3d2;color:#2f7d4f;background:#eef7f0}
+  .st{font-weight:600;white-space:nowrap}
+  .st.SUCCEEDED,.st.completed{color:var(--ok)}
+  .st.FAILED,.st.error{color:var(--err)}
+  .st.RUNNING,.st.running{color:var(--acc)}
+  .st.CANCELLED{color:var(--warn)}
+  .dur{font-variant-numeric:tabular-nums;color:var(--mut);white-space:nowrap}
+  .group td{background:#f7f9fa;font-size:12.5px;color:var(--mut);cursor:default}
+  .group:hover{background:#f7f9fa}
+  .foot{display:flex;justify-content:space-between;color:var(--mut);font-size:12.5px;margin-top:10px}
+  .empty{padding:36px;text-align:center;color:var(--mut);background:var(--card);
+       border:1px dashed var(--line);border-radius:8px;display:none}
+  .note{margin-top:14px;font-size:12.5px;color:var(--mut);border-left:3px solid var(--acc);
+       padding:6px 12px;background:var(--card);border-radius:0 6px 6px 0}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>执行历史</h1>
+  <div class="sub">循环轮次（CP executions）与交互会话子代理（agent_runs 档案）的统一列表 · 点击行查看详情</div>
+
+  <div class="bar">
+    <select id="fProject"><option>全部项目（含未注册）</option><option>demo__skills</option>
+      <option>org__quality_analysis</option><option>D:\projects\portal-service（未注册）</option></select>
+    <span class="chip on" data-src="all">全部</span>
+    <span class="chip" data-src="loop">循环轮次</span>
+    <span class="chip" data-src="agent">子代理档案</span>
+    <select id="fState"><option>全部状态</option><option>运行中</option><option>成功</option>
+      <option>失败</option><option>已取消</option></select>
+    <select id="fAgent"><option value="all">全部 agent</option></select>
+    <input id="fq" placeholder="搜任务 / PR / Issue…">
+  </div>
+
+  <table>
+    <thead><tr>
+      <th style="width:132px">开始时间</th><th style="width:170px">项目</th>
+      <th style="width:150px">来源</th><th>任务 / 轮次</th>
+      <th style="width:92px">状态</th><th style="width:82px">agent</th>
+      <th style="width:76px">耗时</th>
+    </tr></thead>
+    <tbody id="rows"></tbody>
+  </table>
+  <div class="empty" id="empty">没有匹配的执行记录——放宽筛选再试。</div>
+
+  <div class="foot"><span id="cnt"></span><span>每页 50 条 · 仅本机数据，无平台写入</span></div>
+
+  <div class="note">交互演示：两类行都进入现有 view=run 运行详情组件——循环轮次按执行 id 绑定会话流；
+    子代理行按「平台:会话 id」子会话直读（run-detail.html 2026-09-21 agent-session 变体）。
+    「并行规划 ×3」等任务组按父会话折叠展示（点组头展开/收起）。
+    agent 筛选下拉的选项由数据去重填充（真实实现取 /api/history 的 agents facet）——新增 agent 零改动。</div>
+</div>
+
+<script>
+const DATA = [
+ {grp:'vibe-coding 并行规划 ×3 · D:\\projects\\portal-service（未注册） · 09-21 09:57', n:3},
+ {id:'zcode:sess_subagent_agent_b19b',kind:'agent',platform:'zcode',project:'D:\\projects\\portal-service',
+  title:'You are an independent adversarial code reviewer. Work re…',state:'completed',
+  agent:'zcode',started_at:'09-21 09:57',duration_s:542,parent:true},
+ {id:'zcode:sess_subagent_agent_fb5f',kind:'agent',platform:'zcode',project:'D:\\projects\\portal-service',
+  title:'你是 discover loop 的 Inspection Subagent（只读，零写入…',state:'completed',
+  agent:'zcode',started_at:'09-21 10:06',duration_s:1571,parent:true},
+ {id:'claude:3f2a…c9#toolu_01',kind:'agent',platform:'claude',project:'D:\\projects\\portal-service',
+  title:'Architect Review：验证实现与已批准方案图一致性…',state:'error',
+  agent:'claude',started_at:'09-21 10:31',duration_s:96,parent:true},
+ {id:'zcode:sess_9b93ddb3',kind:'agent',platform:'zcode',project:'D:\\projects\\skills',
+  title:'vibe-coding 中等任务：执行历史数据面（Spec/Plan 持久化…',state:'running',
+  agent:'zcode',started_at:'09-21 09:40',duration_s:null},
+ {id:'exec_951c8030…',kind:'loop',loop:'review_round',platform:'—',project:'demo__skills',
+  title:'看板触发审核 PR #237（手动触发，adopt prepared round）',state:'SUCCEEDED',
+  agent:'claude',started_at:'09-21 08:45',duration_s:411},
+ {id:'exec_6149…',kind:'loop',loop:'reviewer',platform:'—',project:'demo__skills',
+  title:'评审 PR #566（定时轮）',state:'SUCCEEDED',agent:'opencode',
+  started_at:'09-21 08:45',duration_s:425},
+ {id:'exec_a344…',kind:'loop',loop:'repair',platform:'—',project:'org__quality_analysis',
+  title:'repair:234 有冲突 PR 修复（看板触发）',state:'FAILED',agent:'pi',
+  started_at:'09-21 08:36',duration_s:64},
+ {id:'exec_dce…',kind:'loop',loop:'discover',platform:'—',project:'org__quality_analysis',
+  title:'巡检轮 R71：信号源扫描（Inspection 子代理 2 次）',state:'SUCCEEDED',
+  agent:'claude',started_at:'09-21 08:06',duration_s:842},
+ {id:'exec_b21…',kind:'loop',loop:'handler',platform:'—',project:'demo__skills',
+  title:'ISSUE_IMPLEMENTATION #536 总览页慢查询',state:'CANCELLED',
+  agent:'claude',started_at:'09-20 23:40',duration_s:1902},
+];
+const $=s=>document.querySelector(s);
+function dur(s){if(s==null)return '—';const m=Math.floor(s/60);return m?m+'m'+(s%60)+'s':s+'s'}
+function row(r){
+  const src = r.kind==='loop'
+    ? '<span class="tag loop">循环·'+r.loop+'</span>'
+    : '<span class="tag '+r.platform+'">'+r.platform+'</span><span class="tag">子代理</span>';
+  return '<tr data-id="'+r.id+'" data-kind="'+r.kind+'">'+
+    '<td class="t">'+r.started_at+'</td><td class="p">'+r.project+'</td><td>'+src+'</td>'+
+    '<td class="title" title="'+r.title.replace(/"/g,'&quot;')+'">'+r.title+'</td>'+
+    '<td class="st '+r.state+'">'+r.state+'</td><td>'+r.agent+'</td>'+
+    '<td class="dur">'+dur(r.duration_s)+'</td></tr>';
+}
+let src='all', grpOpen=true;
+// agent 筛选选项数据驱动：来自数据去重（真实实现取响应的 agents facet，新增 agent 零改动）
+const fAgent=$('#fAgent');
+[...new Set(DATA.filter(r=>!r.grp).map(r=>r.agent))].sort().forEach(a=>{
+  fAgent.insertAdjacentHTML('beforeend','<option value="'+a+'">'+a+'</option>');
+});
+function render(){
+  const tb=$('#rows');tb.innerHTML='';
+  const fa=fAgent.value;
+  let html='',n=0;
+  DATA.forEach(r=>{
+    if(r.grp){
+      const arrow=grpOpen?'▾':'▸';
+      html+='<tr class="group" id="grpRow"><td colspan="7">'+arrow+' 任务组 · '+r.grp+'</td></tr>';
+      return;
+    }
+    if(src!=='all'&&r.kind!==src)return;
+    if(fa!=='all'&&r.agent!==fa)return;
+    if(!grpOpen&&r.parent)return;
+    html+=row(r);n++;
+  });
+  tb.innerHTML=html;
+  $('#cnt').textContent='共 '+n+' 条（演示数据）';
+  $('#empty').style.display=n?'none':'block';
+  const g=$('#grpRow');
+  if(g)g.onclick=()=>{grpOpen=!grpOpen;render()};
+  tb.querySelectorAll('tr[data-kind]').forEach(tr=>tr.onclick=()=>
+    alert('演示：进入现有 view=run 运行详情组件\nexec='+tr.dataset.id
+      +(tr.dataset.kind==='agent'?'（bind=agent-session 子会话直读，见 run-detail.html）':'')));
+}
+document.querySelectorAll('.chip').forEach(c=>c.onclick=()=>{
+  document.querySelectorAll('.chip').forEach(x=>x.classList.remove('on'));
+  c.classList.add('on');src=c.dataset.src;render();
+});
+fAgent.onchange=render;
+render();
+</script>
+</body>
+</html>

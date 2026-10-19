@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<!--
+  原型：看板「触发审核」——agent 卡片由插件注册表驱动（数据驱动渲染）
+        2026-09-20 增补：远程能力上报——模型列表来自执行机（scope 来源标注）
+
+  需求：dashboard 手动触发 review 时可选执行 agent（含模型自动检测下拉）；agent 集合
+        随服务端注册表增长，前端不得再写死列表。执行机在远程时，下拉反映执行机检测到的
+        模型（而非面板主机），并诚实标注列表来源；无上报时回退面板主机检测并明示。
+
+  入口路径：看板「待 agent review」列卡片上的「触发审核」按钮 → 点击先弹本对话框，确认后才下发。
+
+  数据契约（本原型定义、实现照此做）：
+  1) GET /api/spawn/options?project=<org__repo>（2026-09-20 起带 project；不带 = 旧行为）
+     → {"ok":true,
+        "agents":[
+          {"id":"claude",  "label":"claude",   "sub":"Claude Code", "models":null},
+          {"id":"opencode","label":"opencode", "sub":"开源 agent",  "models":["kimi-for-coding/k3", …]},
+          {"id":"pi",      "label":"pi",       "sub":"pi coding agent", "models":["selfhost/…"]}],
+        "scope":{"kind":"machine","machine":"GPU-02","reported_at":1789960000.0}
+              | {"kind":"serve-host"}}
+     · 组装规则（唯一路径）：该项目的注册机器在线且有「能力投影」→ models 取投影，
+       scope=machine；投影缺失（旧 worker 未上报 / 机器离线）→ 回退面板主机本地检测，
+       scope=serve-host。本机项目与本机 worker 的投影同源，与远程同一代码路径。
+     · scope 是事实标注不是授权：执行机 spawn 前仍复检（AGENT_MISSING / MODEL_UNAVAILABLE）。
+  2) 能力投影协议（worker → CP，既有 WS 命令通道）：hello 帧携带 agents + 每 600s 一帧
+     {"type":"agent_options","agents":[{id,models}...]}；CP 按连接认证身份键控、断连即删；
+     投影只存 {id: models}，label/sub 由 serve 端注册表合成（远程字符串零信任进展示面）。
+  3) models:null = 该插件没有检测命令 → 不给下拉、不造数据（≠ [] 检测失败/未装）。
+     scope=machine 时空态文案为「执行机未装 X 或检测失败」；serve-host 维持原文案。
+  4) 固定首卡「默认（项目注册）」不是插件：id 为空 = 不带 agent 字段 = 用该机注册的
+
+     spawn 命令。它由前端固定渲染，不来自载荷。
+  5) POST /api/review/trigger 请求体：project/number 照旧 + 可选 agent/model（不带 = 现状，
+     完全兼容）。门铃边界不变：两字段只是让执行机「代码」选择 argv 预设，永不进入 prompt。
+  6) 执行机 agent 在 spawn 前用自己机器复检：模型不在列表 → 终态 FAIL MODEL_UNAVAILABLE；
+     未装该 CLI → AGENT_MISSING（都由插件在 argv() 里抛，UI 原样显示）。
+
+  四条状态路径（下方状态切换器可逐个演）：
+     · 执行机上报（默认演示）：scope=machine，模型列表=执行机投影，来源行标机器名+时间。
+     · 执行机未上报（回退）：scope=serve-host，列表=面板主机检测（可能与执行机不符）→
+       来源行用警示色明示，这是本特性要消除的「说谎」场景的诚实版本。
+     · 执行机未装某 CLI：scope=machine 但该插件 models=[] → 下拉禁用 + 执行机视角文案。
+     · 接口不可用（503 / 网络错）：只剩固定「默认」卡 + 警示 hint，仍可下发默认轮。
+
+  主题：与 frontend/app.css 仪表面板一致（冷灰纸底 + petrol 主色，禁苹果蓝）。
+  图标（实现照抄内联 SVG）：claude = simple-icons 官方星芒 path（Anthropic clay #D97757）；
+  opencode = opencode.ai/favicon.svg 官方标内联；pi/未知插件/默认 = 通用终端 glyph
+  （中性灰兜底——新增插件不画图标也能用，专属图标走后续原型）。
+  agent 选择用选项卡而非原生 select——原生 option 渲染不了图标。
+  卡片栅格用 auto-fill（插件数量不再固定为 3），多于一行时换行而非压缩。
+-->
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>原型 · 触发审核选 agent 与模型（插件驱动 + 执行机能力上报）</title>
+<style>
+  :root{
+    --paper:#f4f6f8; --ink:#16232e; --mut:#5b6b78; --line:#d8dfe5;
+    --acc:#0e7490; --acc-deep:#155e75; --ok:#15803d; --warn:#b45309; --err:#dc2626;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--paper);color:var(--ink);
+       font:14px/1.5 system-ui,-apple-system,"Segoe UI","Noto Sans",sans-serif;}
+  .wrap{max-width:960px;margin:0 auto;padding:28px 20px 80px}
+  h1{font-size:18px;margin:0 0 4px}
+  .sub{color:var(--mut);margin:0 0 24px}
+  h2{font-size:14px;margin:28px 0 10px;color:var(--mut);font-weight:600}
+
+  /* ---- 看板卡片（示意，仅承载按钮） ---- */
+  .card{background:#fff;border:1px solid var(--line);border-radius:8px;padding:12px 14px;max-width:420px}
+  .card .t{font-weight:600;margin-bottom:6px}
+  .card .m{color:var(--mut);font-size:12px;display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px}
+  .mono{font-family:ui-monospace,Consolas,monospace;font-size:12px}
+  .btn{appearance:none;border-radius:6px;border:1px solid var(--line);background:#fff;
+       color:var(--ink);padding:5px 12px;font-size:13px;cursor:pointer}
+  .btn:hover{border-color:var(--acc);color:var(--acc)}
+  .btn.primary{background:var(--acc);border-color:var(--acc);color:#fff}
+  .btn.primary:hover{background:var(--acc-deep)}
+  .btn:disabled{opacity:.55;cursor:not-allowed}
+  .chip{display:inline-block;border:1px solid var(--line);border-radius:999px;
+        padding:0 8px;font-size:11px;color:var(--mut)}
+
+  /* ---- 对话框 ---- */
+  .backdrop{position:fixed;inset:0;background:rgba(22,35,46,.32);display:none;
+            align-items:flex-start;justify-content:center;padding-top:12vh;z-index:10}
+  .backdrop.open{display:flex}
+  .dlg{background:#fff;border:1px solid var(--line);border-radius:10px;width:360px;
+       box-shadow:0 12px 32px rgba(22,35,46,.18)}
+  .dlg header{padding:12px 16px;border-bottom:1px solid var(--line);
+              font-weight:600;font-size:14px}
+  .dlg header .pr{color:var(--acc);font-family:ui-monospace,Consolas,monospace}
+  .dlg .body{padding:14px 16px;display:grid;gap:12px}
+  .field{display:grid;gap:4px}
+  .field label{font-size:12px;color:var(--mut)}
+  .field select{width:100%;padding:7px 9px;border:1px solid var(--line);border-radius:6px;
+                background:#fff;font:inherit;color:var(--ink)}
+  .field select:focus,.btn:focus-visible,.agcard:focus-visible{outline:2px solid var(--acc);outline-offset:1px}
+  .hint{font-size:12px;color:var(--mut);min-height:1.2em}
+
+  /* ---- agent 选项卡：图标 + 名称（原生 select 渲染不了图标） ----
+     栅格 auto-fill：插件数量由注册表决定，不再固定 3 列；多出的一行换行。 */
+  .agents{display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:8px}
+  .agents .loading{grid-column:1/-1;color:var(--mut);font-size:12px;padding:6px 2px}
+  .agcard{display:flex;flex-direction:column;align-items:center;gap:5px;padding:10px 4px 8px;
+          border:1px solid var(--line);border-radius:8px;background:#fff;cursor:pointer;
+          font:600 12px/1.2 inherit;color:var(--ink);overflow:hidden}
+  .agcard:hover{border-color:var(--acc)}
+  .agcard[aria-checked="true"]{border-color:var(--acc);background:#e9f3f6;
+          box-shadow:inset 0 0 0 1px var(--acc);color:var(--acc-deep)}
+  .agcard .sub2{font-size:10.5px;color:var(--mut);font-weight:400;
+                max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .agicon{width:20px;height:20px;display:block}
+  .hint.warn{color:var(--warn)}
+  .hint.err{color:var(--err)}
+  .dlg footer{padding:12px 16px;border-top:1px solid var(--line);
+              display:flex;justify-content:flex-end;gap:8px}
+
+  /* ---- 2026-09-20 新增：模型列表来源标注（scope）----
+     machine 上报 = 中性灰（可信）；serve-host 回退 = 警示色（列表可能与执行机不符）。 */
+  .scope{font-size:11px;color:var(--mut);margin-top:-6px}
+  .scope.warn{color:var(--warn)}
+  .scope .dot{display:inline-block;width:6px;height:6px;border-radius:50%;
+              background:var(--ok);margin-right:5px;vertical-align:1px}
+  .scope.warn .dot{background:var(--warn)}
+
+  /* ---- 状态切换器（原型专用，实现里没有） ---- */
+  .switcher{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:0 0 14px}
+  .switcher .on{border-color:var(--acc);background:#e9f3f6;color:var(--acc-deep)}
+
+  /* ---- 下发后按钮生命周期演示 ---- */
+  .lifecycle{display:flex;flex-direction:column;gap:8px;max-width:420px}
+  .step{display:flex;align-items:center;gap:10px;background:#fff;
+        border:1px solid var(--line);border-radius:8px;padding:8px 12px}
+  .step .st{width:96px;flex:none;font-size:12px;color:var(--mut)}
+  code{background:#eef2f5;border-radius:4px;padding:1px 5px;
+       font-family:ui-monospace,Consolas,monospace;font-size:12px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>触发审核：选择 agent 与模型（插件驱动 + 执行机能力上报）</h1>
+  <p class="sub">原型 — agent 卡片由服务端注册表下发；模型列表来自执行机（scope 标注来源），前端不写死列表。假数据内联，双击打开即用。</p>
+
+  <h2>① 看板卡片（点按钮体验交互）</h2>
+  <div class="card">
+    <div class="t">#204 考题变更护栏——reviewer 判词对触碰 verify.json 的 PR 盖警示章</div>
+    <div class="m"><span class="chip ok">可合并</span><span class="mono">feature/mocx/exam-guardrail</span><span>2 小时前</span></div>
+    <button class="btn" id="triggerBtn" onclick="openDialog(this)">触发审核</button>
+  </div>
+
+  <h2>② 服务端状态（原型专用切换器，演示四条路径）</h2>
+  <div class="switcher">
+    <button class="btn on" id="sw-machine" onclick="setState('machine')">执行机上报（GPU-02）</button>
+    <button class="btn" id="sw-serve" onclick="setState('serve')">执行机未上报（回退面板主机）</button>
+    <button class="btn" id="sw-degraded" onclick="setState('degraded')">执行机未装 opencode</button>
+    <button class="btn" id="sw-down" onclick="setState('down')">接口不可用（503）</button>
+  </div>
+  <p class="hint" id="stateNote"></p>
+
+  <h2>③ 下发后按钮生命周期（对话确认后）</h2>
+  <div class="lifecycle">
+    <div class="step"><span class="st">下发中</span><button class="btn" disabled>下发中…</button></div>
+    <div class="step"><span class="st">已派发</span><button class="btn" disabled>已派发 GPU-02 ✓</button></div>
+    <div class="step"><span class="st">运行中</span><button class="btn" disabled>运行中 ✓</button>
+      <span class="hint">reviewer 执行卡出现在「审核中」列，行为与现状一致</span></div>
+    <div class="step"><span class="st">失败（新）</span><button class="btn" disabled title="MODEL_UNAVAILABLE: kimi-for-coding/k999 不在本机 opencode models，换模型或在该机安装">失败</button>
+      <span class="hint err">执行机模型复检不过 → 终态失败，title 给原因；不回队、不浪费会话（复检不因投影存在而省略）</span></div>
+  </div>
+</div>
+
+<div class="backdrop" id="bd" onclick="if(event.target===this)closeDialog()">
+  <div class="dlg" role="dialog" aria-modal="true" aria-labelledby="dlgTitle">
+    <header id="dlgTitle">触发审核 · <span class="pr">#204</span></header>
+    <div class="body">
+      <div class="field">
+        <label id="agentLabel">执行 agent</label>
+        <div class="agents" id="agentList" role="radiogroup" aria-labelledby="agentLabel"></div>
+      </div>
+      <div class="scope" id="scopeLine" style="display:none"></div>
+      <div class="field" id="modelField" style="display:none">
+        <label for="modelSel">模型 <span id="modelState"></span></label>
+        <select id="modelSel" disabled><option value="">默认</option></select>
+      </div>
+      <div class="hint" id="dlgHint"></div>
+    </div>
+    <footer>
+      <button class="btn" onclick="closeDialog()">取消</button>
+      <button class="btn primary" id="goBtn" onclick="confirmDispatch()">开始评审</button>
+    </footer>
+  </div>
+</div>
+
+<script>
+// 图标表：按插件 id 查，查不到用 GENERIC（实现里同此约定——新增插件不写图标也能用；
+// pi 走通用兜底，专属图标另行走原型流程）
+const GENERIC_ICON = '<svg class="agicon" viewBox="0 0 24 24" fill="none" aria-hidden="true">'
+  + '<rect x="2.5" y="4.5" width="19" height="15" rx="3" stroke="#5b6b78" stroke-width="1.6"/>'
+  + '<path d="M7 9.5l3 2.5-3 2.5" stroke="#5b6b78" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>'
+  + '<path d="M12.5 15H17" stroke="#5b6b78" stroke-width="1.6" stroke-linecap="round"/></svg>';
+const ICONS = {
+  '': GENERIC_ICON,
+  claude: '<svg class="agicon" viewBox="0 0 24 24" aria-hidden="true"><path fill="#D97757" d="m4.7144 15.9555 4.7174-2.6471.079-.2307-.079-.1275h-.2307l-.7893-.0486-2.6956-.0729-2.3375-.0971-2.2646-.1214-.5707-.1215-.5343-.7042.0546-.3522.4797-.3218.686.0608 1.5179.1032 2.2767.1578 1.6514.0972 2.4468.255h.3886l.0546-.1579-.1336-.0971-.1032-.0972L6.973 9.8356l-2.55-1.6879-1.3356-.9714-.7225-.4918-.3643-.4614-.1578-1.0078.6557-.7225.8803.0607.2246.0607.8925.686 1.9064 1.4754 2.4893 1.8336.3643.3035.1457-.1032.0182-.0728-.164-.2733-1.3539-2.4467-1.445-2.4893-.6435-1.032-.17-.6194c-.0607-.255-.1032-.4674-.1032-.7285L6.287.1335 6.6997 0l.9957.1336.419.3642.6192 1.4147 1.0018 2.2282 1.5543 3.0296.4553.8985.2429.8318.091.255h.1579v-.1457l.1275-1.706.2368-2.0947.2307-2.6957.0789-.7589.3764-.9107.7468-.4918.5828.2793.4797.686-.0668.4433-.2853 1.8517-.5586 2.9021-.3643 1.9429h.2125l.2429-.2429.9835-1.3053 1.6514-2.0643.7286-.8196.85-.9046.5464-.4311h1.0321l.759 1.1293-.34 1.1657-1.0625 1.3478-.8804 1.1414-1.2628 1.7-.7893 1.36.0729.1093.1882-.0183 2.8535-.607 1.5421-.2794 1.8396-.3157.8318.3886.091.3946-.3278.8075-1.967.4857-2.3072.4614-3.4364.8136-.0425.0304.0486.0607 1.5482.1457.6618.0364h1.621l3.0175.2247.7892.522.4736.6376-.079.4857-1.2142.6193-1.6393-.3886-3.825-.9107-1.3113-.3279h-.1822v.1093l1.0929 1.0686 2.0035 1.8092 2.5075 2.3314.1275.5768-.3218.4554-.34-.0486-2.2039-1.6575-.85-.7468-1.9246-1.621h-.1275v.17l.4432.6496 2.3436 3.5214.1214 1.0807-.17.3521-.6071.2125-.6679-.1214-1.3721-1.9246L14.38 17.959l-1.1414-1.9428-.1397.079-.674 7.2552-.3156.3703-.7286.2793-.6071-.4614-.3218-.7468.3218-1.4753.3886-1.9246.3157-1.53.2853-1.9004.17-.6314-.0121-.0425-.1397.0182-1.4328 1.9672-2.1796 2.9446-1.7243 1.8456-.4128.164-.7164-.3704.0667-.6618.4008-.5889 2.386-3.0357 1.4389-1.882.929-1.0868-.0062-.1579h-.0546l-6.3385 4.1164-1.1293.1457-.4857-.4554.0608-.7467.2307-.2429 1.9064-1.3114Z"/></svg>',
+  opencode: '<svg class="agicon" viewBox="0 0 512 512" aria-hidden="true"><rect width="512" height="512" rx="110" fill="#131010"/><path d="M320 224V352H192V224H320Z" fill="#5A5858"/><path fill-rule="evenodd" clip-rule="evenodd" d="M384 416H128V96H384V416ZM320 160H192V352H320V160Z" fill="#fff"/></svg>'
+};
+
+// 假数据：GET /api/spawn/options?project=mocx__skills 的返回。
+// 卡片集合 = 真实注册表（claude/opencode/pi）+ 虚构 zcode（证明「加插件不改前端」）。
+// scope=machine 的 opencode 模型刻意与面板主机不同——这正是本特性要传达的事实。
+const MACHINE_SCOPE = {kind: 'machine', machine: 'GPU-02', reported_at: Date.now() / 1000 - 180};
+const STATES = {
+  machine: {note: '执行机上报：模型列表=GPU-02 的能力投影（注意 opencode 列表与面板主机不同），来源行标机器名+上报时间。',
+       scope: MACHINE_SCOPE,
+       agents: [
+         {id: 'claude', label: 'claude', sub: 'Claude Code', models: null},
+         {id: 'opencode', label: 'opencode', sub: '开源 agent', models: [
+           'kimi-for-coding/k3', 'opencode/big-pickle']},
+         {id: 'pi', label: 'pi', sub: 'pi coding agent', models: [
+           'selfhost/deepseek-v4-flash-0731-self']},
+         {id: 'zcode', label: 'zcode', sub: 'ZCode CLI', models: [
+           'deepseek/v4.1-flash', 'deepseek/v4.1-pro']}]},
+  serve: {note: '执行机未上报（旧 worker / 离线）：回退面板主机本地检测——列表可能与执行机不符，来源行警示色明示。这是被本特性消除的「说谎」场景的诚实版本。',
+       scope: {kind: 'serve-host'},
+       agents: [
+         {id: 'claude', label: 'claude', sub: 'Claude Code', models: null},
+         {id: 'opencode', label: 'opencode', sub: '开源 agent', models: [
+           'opencode/mimo-v2.5-free', 'opencode/nemotron-3.5-lightning-free']},
+         {id: 'pi', label: 'pi', sub: 'pi coding agent', models: []},
+         {id: 'zcode', label: 'zcode', sub: 'ZCode CLI', models: [
+           'deepseek/v4.1-flash', 'deepseek/v4.1-pro']}]},
+  degraded: {note: '执行机已上报但未装 opencode：scope=machine、该卡 models=[] → 下拉禁用 + 执行机视角文案（选了也只会 MODEL_UNAVAILABLE/AGENT_MISSING）。',
+       scope: MACHINE_SCOPE,
+       agents: [
+         {id: 'claude', label: 'claude', sub: 'Claude Code', models: null},
+         {id: 'opencode', label: 'opencode', sub: '开源 agent', models: []},
+         {id: 'pi', label: 'pi', sub: 'pi coding agent', models: [
+           'selfhost/deepseek-v4-flash-0731-self']}]},
+  down: {note: '接口不可用：只剩固定的「默认（项目注册）」卡 + 警示；默认轮仍可下发。',
+       scope: null,
+       agents: null, error: 'spawn options not wired on this server'}
+};
+let state = 'machine';
+let optionsCache = null;   // 实现里服务端已缓存（投影在内存）；前端每次开窗取一次即可
+
+function esc(s){ return String(s).replace(/[&<>"']/g,
+  c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+function setState(next){
+  state = next; optionsCache = null;
+  ['machine','serve','degraded','down'].forEach(k =>
+    document.getElementById('sw-' + k).classList.toggle('on', k === next));
+  document.getElementById('stateNote').textContent = STATES[next].note;
+}
+setState('machine');
+
+async function loadOptions(){
+  if (optionsCache) return optionsCache;
+  await new Promise(r => setTimeout(r, 250));            // 模拟首次取数耗时
+  const s = STATES[state];
+  if (!s.agents) throw new Error(s.error);
+  optionsCache = {agents: s.agents, scope: s.scope};
+  return optionsCache;
+}
+
+// 固定首卡：不是插件——不带 agent 字段 = 用该机注册的 spawn 命令。
+const DEFAULT_CARD = {id: '', label: '默认', sub: '项目注册'};
+
+function agentCard(a){
+  const title = a.id === '' ? '使用项目注册的 spawn 命令'
+    : (a.models === null ? a.label + '（模型走注册缺省）' : a.label + '（模型可下拉选择）');
+  return `<button type="button" class="agcard" role="radio" aria-checked="${a.id === ''}"
+            data-agent="${esc(a.id)}" title="${esc(title)}">
+    ${ICONS[a.id] || GENERIC_ICON}${esc(a.label)}<span class="sub2">${esc(a.sub)}</span>
+  </button>`;
+}
+
+function paintAgents(rows, hint, warn){
+  const list = document.getElementById('agentList');
+  list.innerHTML = rows.map(agentCard).join('');
+  list.querySelectorAll('.agcard').forEach(card => card.addEventListener('click', () => {
+    list.querySelectorAll('.agcard').forEach(
+      x => x.setAttribute('aria-checked', x === card ? 'true' : 'false'));
+    onAgentChange();
+  }));
+  const h = document.getElementById('dlgHint');
+  h.className = warn ? 'hint warn' : 'hint';
+  h.textContent = hint || '';
+}
+
+// 2026-09-20 新增：模型列表来源标注。数据驱动，本地/远程同一渲染分支。
+function paintScope(scope){
+  const el = document.getElementById('scopeLine');
+  if (!scope){ el.style.display = 'none'; return; }
+  el.style.display = 'block';
+  if (scope.kind === 'machine'){
+    el.className = 'scope';
+    const t = new Date(scope.reported_at * 1000).toLocaleTimeString('zh-CN',
+      {hour: '2-digit', minute: '2-digit'});
+    el.innerHTML = `<span class="dot"></span>模型列表来自执行机 ${esc(scope.machine)} 上报 · ${esc(t)}`;
+  } else {
+    el.className = 'scope warn';
+    el.innerHTML = '<span class="dot"></span>模型列表来自面板主机检测（执行机未上报，可能与执行机不符）';
+  }
+}
+
+function openDialog(btn){
+  document.getElementById('bd').classList.add('open');
+  document.getElementById('modelField').style.display = 'none';
+  document.getElementById('scopeLine').style.display = 'none';
+  document.getElementById('agentList').innerHTML =
+    '<div class="loading">检测执行 agent…</div>';
+  document.getElementById('dlgHint').textContent = '';
+  loadOptions().then(
+    opts => {
+      paintAgents([DEFAULT_CARD].concat(opts.agents), '');
+      paintScope(opts.scope);
+      onAgentChange();
+    },
+    err => {   // 接口不可用：降级为只有默认卡，默认轮照常可下发
+      paintAgents([DEFAULT_CARD], 'agent 列表获取失败：' + err.message
+        + '（可按默认继续）', true);
+      paintScope(null);
+      onAgentChange();
+    });
+}
+function closeDialog(){ document.getElementById('bd').classList.remove('open'); }
+function selectedAgent(){
+  const el = document.querySelector('#agentList .agcard[aria-checked="true"]');
+  return el ? el.dataset.agent : '';
+}
+
+async function onAgentChange(){
+  const agent = selectedAgent();
+  const field = document.getElementById('modelField');
+  const sel = document.getElementById('modelSel');
+  const stateEl = document.getElementById('modelState');
+  const hint = document.getElementById('dlgHint');
+  if (hint.className.indexOf('warn') < 0){ hint.className = 'hint'; hint.textContent = ''; }
+  if (!agent){ field.style.display = 'none'; return; }        // 默认卡：无模型字段
+  field.style.display = 'grid';
+  const row = ((optionsCache || {}).agents || []).find(a => a.id === agent);
+  if (!row){ field.style.display = 'none'; return; }          // 载荷里没有：不猜、不给字段
+  if (row.models === null){                                    // 插件无检测命令：禁用下拉
+    sel.innerHTML = '<option value="">默认（注册缺省）</option>';
+    sel.disabled = true; stateEl.textContent = '';
+    return;
+  }
+  if (!row.models.length){                                     // 检测失败/未装：说明而不是造数据
+    sel.innerHTML = '<option value="">默认</option>';
+    sel.disabled = true;
+    // scope=machine：列表来自执行机，空=执行机视角没装/失败；serve-host 维持原文案
+    stateEl.textContent = optionsCache && optionsCache.scope
+      && optionsCache.scope.kind === 'machine'
+      ? '（执行机未装 ' + row.label + ' 或检测失败）'
+      : '（检测失败或未装 ' + row.label + '）';
+    return;
+  }
+  sel.innerHTML = '<option value="">默认（' + esc(row.label) + ' 自身配置）</option>'
+    + row.models.map(m => `<option value="${esc(m)}">${esc(m)}</option>`).join('');
+  sel.disabled = false; stateEl.textContent = '';
+}
+
+function confirmDispatch(){
+  const agent = selectedAgent();
+  const model = document.getElementById('modelSel').value;
+  const hint = document.getElementById('dlgHint');
+  const body = {project: 'mocx__skills', number: 204};
+  if (agent) body.agent = agent;
+  if (agent && model) body.model = model;
+  hint.className = 'hint';
+  hint.textContent = 'POST /api/review/trigger ' + JSON.stringify(body);
+  // 实现里：fetch 成功 → 关窗，按钮进入「下发中…」轮询生命周期（与现状同一套）
+  setTimeout(() => {
+    closeDialog();
+    const btn = document.getElementById('triggerBtn');
+    btn.disabled = true; btn.textContent = '下发中…';
+    setTimeout(() => { btn.textContent = '已派发 GPU-02 ✓'; }, 800);
+    setTimeout(() => { btn.textContent = '运行中 ✓'; }, 1600);
+    setTimeout(() => { btn.textContent = '触发审核'; btn.disabled = false; }, 3200);
+  }, 600);
+}
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeDialog(); });
+</script>
+</body>
+</html>

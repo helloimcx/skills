@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>code-loop dashboard</title>
+<link rel="stylesheet" href="/static/app.css">
+<script src="/static/marked.min.js"></script>
+<script src="/static/purify.min.js"></script>
+</head>
+<body>
+<div id="navbar-wrap">
+<nav class="navbar sticky-top bg-body-tertiary border-bottom py-2 px-3 flex-wrap gap-2">
+  <span class="navbar-brand d-flex align-items-center gap-2 fw-semibold my-0" role="button"
+    tabindex="0" title="回到看板首页" onclick="showView('kanban');return false">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <circle cx="12" cy="12" r="9" style="stroke:var(--bs-primary)" stroke-width="2.4"
+        stroke-dasharray="40 16" stroke-linecap="round"/>
+      <circle cx="12" cy="12" r="3.2" style="fill:var(--bs-primary)"/>
+    </svg>
+    code-loop dashboard
+  </span>
+  <div class="nav nav-pills gap-1" id="tabs">
+    <button data-v="kanban" class="nav-link active">看板</button>
+    <button data-v="history" class="nav-link">执行历史</button>
+    <button data-v="operator" class="nav-link">Operator</button>
+    <button data-v="projects" class="nav-link">项目</button>
+    <button data-v="pipeline" class="nav-link">Issue/PR</button>
+    <button data-v="loops" class="nav-link">循环</button>
+    <button data-v="trends" class="nav-link">趋势</button>
+    <button data-v="events" class="nav-link">活动</button>
+  </div>
+  <div class="d-flex align-items-center gap-2 ms-auto flex-wrap">
+    <select id="proj-filter" class="form-select form-select-sm" style="display:none;width:auto"></select>
+    <button id="collect-btn" class="btn btn-sm btn-outline-primary" style="display:none"
+    title="从平台重新拉取数据（只读操作）">立即采集</button>
+    <span id="fresh" class="small text-body-secondary">加载中…</span>
+  </div>
+</nav>
+<div id="alertbar" class="border-bottom bg-body-tertiary" title="点击展开全部告警"
+  role="button" tabindex="0" aria-expanded="false" aria-controls="alert-panel">
+  <span class="badge text-bg-danger zero" id="b-err">错误 0</span>
+  <span class="badge text-bg-warning zero" id="b-warn">注意 0</span>
+  <span class="badge text-bg-secondary zero" id="b-info">提示 0</span>
+  <span id="alert-items">—</span></div>
+<div id="alert-panel" hidden></div>
+</div>
+<div id="focus-bar"><span class="t" id="focus-label"></span>
+  <a role="button" tabindex="0" onclick="setFilter('')">✕ 显示全部项目</a></div>
+<div id="data-errors" role="alert"></div>
+<main>
+  <section class="view active" id="view-kanban">
+    <div id="kanban-strip"></div>
+    <div id="kanban-board" class="kanban"></div>
+  </section>
+  <section class="view" id="view-decision">
+    <div id="decision-detail"></div>
+  </section>
+  <section class="view" id="view-run">
+    <div id="run-detail"></div>
+  </section>
+  <section class="view" id="view-history">
+    <div class="card" style="margin-bottom:14px">
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <div class="btn-group btn-group-sm" role="group" id="hist-src">
+          <button type="button" class="btn btn-outline-primary active" data-src="all">全部</button>
+          <button type="button" class="btn btn-outline-primary" data-src="loop">循环轮次</button>
+          <button type="button" class="btn btn-outline-primary" data-src="agent">子代理档案</button></div>
+        <select id="hist-state" class="form-select form-select-sm" style="width:auto">
+          <option value="">全部状态</option><option value="RUNNING">运行中</option>
+          <option value="SUCCEEDED">成功</option><option value="FAILED">失败</option>
+          <option value="CANCELLED">已取消</option></select>
+        <select id="hist-project" class="form-select form-select-sm" style="width:auto"
+                title="项目选项由执行数据去重填充（含未注册项目）">
+          <option value="">全部项目（含未注册）</option></select>
+        <select id="hist-agent" class="form-select form-select-sm" style="width:auto"
+                title="agent 选项由执行数据去重填充（新增 agent 零改动）">
+          <option value="">全部 agent</option></select>
+        <input id="hist-q" class="form-control form-control-sm" style="width:220px"
+               placeholder="搜任务 / PR / Issue…">
+        <span class="small mut" id="hist-cnt"></span></div>
+    </div>
+    <div id="hist-table"></div>
+  </section>
+  <section class="view" id="view-operator">
+    <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:.8rem;flex-wrap:wrap;margin-bottom:.55rem">
+      <div>
+        <h2 class="section" style="margin:0">干预台账</h2>
+        <div class="small mut">协调监控 agent（operator）的每次巡检：信号 → 诊断 → 动作 → 结局 · 点击行进运行详情</div>
+      </div>
+      <div class="d-flex align-items-center gap-2 flex-wrap">
+        <button id="op-trigger-btn" class="btn btn-sm btn-primary"
+                title="手动触发一轮协调巡检（绕过冷却/日额）">手动触发协调巡检</button>
+      </div>
+    </div>
+    <div class="card" style="margin-bottom:.6rem">
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <select id="op-src" class="form-select form-select-sm" style="width:auto">
+          <option value="">全部来源</option><option value="alert">告警</option>
+          <option value="cp_event">CP 事件</option><option value="watchdog">watchdog</option>
+          <option value="manual">手动</option></select>
+        <div class="btn-group btn-group-sm" role="group" id="op-oc">
+          <button type="button" class="btn btn-outline-primary active" data-oc="">全部</button>
+          <button type="button" class="btn btn-outline-primary" data-oc="RUNNING">进行中</button>
+          <button type="button" class="btn btn-outline-primary" data-oc="RESOLVED">已解决</button>
+          <button type="button" class="btn btn-outline-primary" data-oc="MITIGATED_WATCHING">已缓解·观察中</button>
+          <button type="button" class="btn btn-outline-primary" data-oc="ESCALATED_HUMAN">已升级人工</button>
+          <button type="button" class="btn btn-outline-primary" data-oc="FALSE_POSITIVE_NOOP">误报未动</button>
+          <button type="button" class="btn btn-outline-primary" data-oc="FAILED">失败</button></div>
+        <input id="op-q" class="form-control form-control-sm" style="width:190px"
+               placeholder="搜信号 / 诊断 / 动作…">
+        <span class="small mut" id="op-cnt"></span></div>
+    </div>
+    <div id="op-table"></div>
+    <div class="small mut" style="margin-top:.4rem">只读台账，动作留痕在 operator Store 审计事件；
+      skipped（冷却/日额/过期）信号没起轮、不进本视图（决策留痕 operator-log.jsonl）。</div>
+  </section>
+
+  <section class="view" id="view-projects">
+    <div class="cards" id="project-cards"></div>
+  </section>
+  <section class="view" id="view-pipeline">
+    <div id="flow-strip" class="flow-strip"></div>
+    <h2 class="section">Pull Requests</h2><div id="pr-table"></div>
+    <h2 class="section">Issues <span class="small mut" style="font-weight:400">默认显示 open 与近 7 天关闭，可展开全部</span></h2>
+    <div id="issue-table"></div>
+  </section>
+  <section class="view" id="view-loops">
+    <h2 class="section">接入机器</h2><div id="machines" class="cards mb-2"></div>
+    <h2 class="section">循环活动</h2><div id="loop-cards"></div>
+    <h2 class="section">Control Plane 运行时
+      <select id="rt-project" class="form-select form-select-sm d-inline-block w-auto align-middle ms-2"></select></h2>
+    <div id="runtime"></div>
+  </section>
+  <section class="view" id="view-trends">
+    <div class="cards" id="cycle-cards" style="margin-bottom:1rem"></div>
+    <div id="chart-wrap">
+      <div class="legend" id="chart-legend"></div>
+      <svg id="chart" width="100%" height="240" role="img"></svg>
+    </div>
+  </section>
+  <section class="view" id="view-events">
+    <div class="d-flex align-items-center gap-2 flex-wrap" style="margin-bottom:.4rem">
+      <h2 class="section my-0">活动时间线</h2>
+      <select id="ev-days" class="form-select form-select-sm w-auto">
+        <option value="3">近 3 天</option><option value="7" selected>近 7 天</option>
+        <option value="14">近 14 天</option><option value="30">近 30 天</option>
+      </select>
+      <select id="ev-kind" class="form-select form-select-sm w-auto">
+        <option value="">全部类型</option>
+      </select>
+      <span id="ev-total" class="small mut"></span>
+    </div>
+    <div id="ev-chart" class="ev-bar" style="margin-bottom:.6rem"></div>
+    <div id="ev-list"></div>
+  </section>
+</main>
+<script src="/static/app.js"></script>
+</body>
+</html>
