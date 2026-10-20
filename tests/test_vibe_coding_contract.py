@@ -50,9 +50,7 @@ class VibeCodingContractTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
 
         for doc in (skill, planning):
-            self.assertIn("archify compare", doc)
-            self.assertIn("docs/architecture/changes/", doc)
-            self.assertIn("fallback", doc.casefold())
+            self.assertIn("Mermaid/ASCII", doc)
 
         self.assertIn("docs/plans/", skill)
         self.assertIn("docs/specs/", skill)
@@ -111,7 +109,7 @@ class VibeCodingContractTests(unittest.TestCase):
         self.assertIn("Linter", review)
         self.assertIn("格式", review)
 
-    def test_archify_only_used_for_complex_tasks_with_architecture_changes(self) -> None:
+    def test_diagrams_use_mermaid_or_ascii_across_skill_and_references(self) -> None:
         skill = (VIBE_CODING_DIR / "SKILL.md").read_text(encoding="utf-8")
         readme = (VIBE_CODING_DIR / "README.md").read_text(encoding="utf-8")
         planning = (
@@ -124,15 +122,15 @@ class VibeCodingContractTests(unittest.TestCase):
             encoding="utf-8"
         )
 
-        self.assertIn("复杂任务且有架构变化时使用 `/archify`", skill)
-        self.assertIn("复杂任务且有架构变化（`Architecture Impact: Required`）：** 使用 `/archify`", skill)
-        self.assertIn("其他情况（中等任务、无架构变化的复杂任务）：** 在 Plan 中嵌入紧凑 Mermaid", skill)
-        self.assertIn("复杂任务且有架构变化时使用 `/archify`", readme)
-        self.assertIn("若无架构变化（`Architecture Impact: None`），在 Plan 中直接嵌入紧凑 Mermaid 方案图", planning)
-        self.assertIn("复杂任务且有架构变化时使用 `/archify`", doc_sync)
-        self.assertIn("复杂任务且有架构变化时使用 `/archify`", review)
-        self.assertNotIn("无需调用", skill)
-        self.assertNotIn("无需调用", planning)
+        for doc in (skill, readme, planning, doc_sync, review):
+            with self.subTest(document=doc.splitlines()[0]):
+                self.assertIn("Mermaid/ASCII", doc)
+                self.assertNotIn(".html", doc)
+
+        self.assertIn("在 Plan 中嵌入紧凑 Mermaid；纯文本环境可使用 ASCII", skill)
+        self.assertIn("架构影响决定文档同步范围", skill)
+        self.assertIn("语义记录对 Plan 中 Mermaid/ASCII 方案图的引用", review)
+
 
 
 if __name__ == "__main__":

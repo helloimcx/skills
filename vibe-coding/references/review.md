@@ -84,8 +84,8 @@ Reviewer 的心态：**尝试证明这段代码在真实场景下会失败。**
 
 除上述两项外，再检查：
 
-- 代码实现是否与已批准的 `docs/architecture/changes/YYYY-MM-DD-<task-slug>.html` 方案对比图拓扑一致，有无擅自偏离或扩充边界；
-- 架构变更是否同步更新了 L1-L3 规范，且 `lint:arch` 门禁执行通过（0 错误、0 警告）；
+- 代码实现是否与 Plan 中已批准的 Mermaid/ASCII 方案图拓扑一致，有无擅自偏离或扩充边界；
+- 架构变更是否同步更新了受影响的架构规范，且项目已有且适用的架构门禁（如 `lint:arch`）执行通过；
 - 模块边界是否正确；
 - 依赖是否单向、是否产生循环依赖；
 - 抽象层级是否合理；
@@ -100,7 +100,7 @@ Reviewer 的心态：**尝试证明这段代码在真实场景下会失败。**
 
 按照 [documentation-sync.md](documentation-sync.md) 验证文档影响结论。若代码改变模块边界、依赖关系、公共接口、核心流程、数据流、API、配置、部署拓扑或开发/构建/测试流程，而相关架构规范（L1-L3）、变更记录、Spec、Plan 或仓库级规则未同步更新，将其列为阻塞 Finding，Review 不得通过。
 
-若任务涉及架构变更（`Architecture Impact: Required`），检查架构规范是否更新且 `lint:arch` 校验通过；若为复杂任务，进一步检查 `docs/architecture/changes/YYYY-MM-DD-<task-slug>.md` 语义记录是否与方案阶段的 HTML 对比图成对归档（已声明降级时检查回退图与原因引用）；未同步时 Review 不得通过。
+若任务涉及架构变更（`Architecture Impact: Required`），检查架构规范是否更新且项目已有且适用的架构门禁（如 `lint:arch`）通过，并检查 `docs/architecture/changes/YYYY-MM-DD-<task-slug>.md` 语义记录对 Plan 中 Mermaid/ASCII 方案图的引用；未同步时 Review 不得通过。
 
 新增职责与边界清晰的较大独立模块时，检查是否存在对应的 `docs/architecture/modules/<module-name>.md`、模块索引入口及必要架构图；缺失时 Review 不得通过。
 
@@ -116,4 +116,4 @@ Reviewer 的心态：**尝试证明这段代码在真实场景下会失败。**
 
 有效 Finding 修复后重新运行相关测试；如果改动影响 Review 结论，应再次调用独立 Reviewer。
 
-方案图格式遵循 [SKILL.md](../SKILL.md) 的分级规则：复杂任务且有架构变化时使用 `/archify` 生成 HTML 对比图并与变更语义记录成对归档（声明降级时引用回退图与原因）；复杂任务无架构变化及中等任务在 Plan 中嵌入简要 Mermaid。
+方案图格式遵循 [SKILL.md](../SKILL.md)：方案图使用紧凑 Mermaid/ASCII；中等和复杂任务将其嵌入 Plan，架构变更语义记录引用该方案图。
