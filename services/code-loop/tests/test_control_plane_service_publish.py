@@ -26,6 +26,83 @@ from codeloop.cp.service import Service
 from _service_test_base import Platform, git, ServiceTestsBase
 
 class ServicePublishTests(ServiceTestsBase):
+    @staticmethod
+    def _batch_report():
+        return {'decision': 'CONFIRMED', 'reviewer': 'verifier', 'summary': 'two independent findings',
+                'actions': [
+                    {'action': 'create_issue', 'payload': {'title': '[Content] first', 'body': 'proof one'}},
+                    {'action': 'create_issue', 'payload': {'title': '[Content] second', 'body': 'proof two'}},
+                ]}
+
+    def test_batch_publish_only_terminalizes_after_every_child_is_sent(self):
+        s, p = self._fresh({})
+        s.sync()
+        e = s.claim('discover', 'inspector')
+        s.report(e['id'], e['token'], self._batch_report())
+        result = s.publish(e['id'], e['token'])
+        self.assertEqual([r['number'] for r in result['issues']], [100, 101])
+        rows = s.store.db.execute('SELECT state FROM outbox ORDER BY id').fetchall()
+        self.assertEqual([r['state'] for r in rows], ['SENT', 'SENT'])
+        self.assertEqual(s.store.db.execute('SELECT state FROM executions WHERE id=?',
+                                            (e['id'],)).fetchone()['state'], 'SUCCEEDED')
+        self.assertEqual(len(p.writes), 2)
+
+    def test_batch_partial_unknown_recovers_without_duplicate_issue(self):
+        s, p = self._fresh({})
+        s.sync()
+        e = s.claim('discover', 'inspector')
+        s.report(e['id'], e['token'], self._batch_report())
+        p.uncertain = True
+        with self.assertRaisesRegex(ValueError, 'PUBLICATION_UNKNOWN'):
+            s.publish(e['id'], e['token'])
+        states = [r['state'] for r in s.store.db.execute('SELECT state FROM outbox ORDER BY id')]
+        self.assertEqual(states, ['UNKNOWN'])
+        self.assertEqual(s.store.db.execute('SELECT state FROM executions WHERE id=?',
+                                            (e['id'],)).fetchone()['state'], 'RUNNING')
+        p.uncertain = False
+        result = s.publish(e['id'], e['token'])
+        self.assertEqual([r['number'] for r in result['issues']], [100, 101])
+        self.assertEqual(len(p.writes), 2, 'first Issue is reconciled by marker, not recreated')
+        self.assertEqual([r['state'] for r in s.store.db.execute(
+            'SELECT state FROM outbox ORDER BY id')], ['SENT', 'SENT'])
+        self.assertEqual(s.store.db.execute('SELECT state FROM executions WHERE id=?',
+                                            (e['id'],)).fetchone()['state'], 'SUCCEEDED')
+
+    def test_batch_schema_role_and_report_freeze_guards(self):
+        s, _ = self._fresh({})
+        s.sync()
+        e = s.claim('discover', 'inspector')
+        malformed = self._batch_report()
+        malformed['action'] = 'create_issue'
+        malformed['payload'] = {'title': 'mixed', 'body': 'not allowed'}
+        with self.assertRaisesRegex(ValueError, 'ACTION_FIELDS_MUTUALLY_EXCLUSIVE'):
+            s.report(e['id'], e['token'], malformed)
+        malformed = self._batch_report()
+        malformed['actions'][0] = {'action': 'review_comment', 'payload': {'number': 1, 'body': 'no'}}
+        with self.assertRaisesRegex(ValueError, 'BATCH_ACTION_FORBIDDEN'):
+            s.report(e['id'], e['token'], malformed)
+        self.assertEqual(s.store.db.execute('SELECT COUNT(*) FROM outbox').fetchone()[0], 0)
+        s.report(e['id'], e['token'], self._batch_report())
+        prepared = s.prepare_publish(e['id'], e['token'], action_index=0)
+        s.complete_publish(e['id'], e['token'], prepared['op'], pushed=True)
+        changed = self._batch_report()
+        changed['actions'][0]['payload']['title'] = '[Content] changed after publish began'
+        with self.assertRaisesRegex(ValueError, 'PUBLICATION_ALREADY_STARTED'):
+            s.report(e['id'], e['token'], changed)
+        self.assertEqual(s.store.db.execute('SELECT state FROM executions WHERE id=?',
+                                            (e['id'],)).fetchone()['state'], 'RUNNING')
+
+    def test_batch_actions_are_rejected_for_non_discover_role(self):
+        s, p = self._fresh({})
+        pr = self.pr()
+        pr['body'] = 'fix'
+        p.data['prs'] = [pr]
+        s.sync()
+        e = s.claim('reviewer', 'reviewer-worker')
+        with self.assertRaisesRegex(ValueError, 'INVALID_ACTIONS'):
+            s.report(e['id'], e['token'], self._batch_report())
+        self.assertEqual(s.store.db.execute('SELECT COUNT(*) FROM outbox').fetchone()[0], 0)
+
     def test_uncertain_publish_recovers_without_duplicate(self):
         self.s.sync()
         e = self.s.claim('discover', 'inspector')

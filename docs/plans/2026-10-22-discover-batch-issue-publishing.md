@@ -8,7 +8,7 @@
 4. 保留 GitHub adapter 的单 Issue 校验、写入与 marker 查询；单项动作继续走原路径。
 5. 更新 Discover 规则与通用 Skill 指引，要求只读检查、独立证据、开放 Issue/PR 去重、批量发布和队列确认。
 6. 更新 Skills Discover 定时任务提示词，读取已安装的 code-loop 规范，执行完整 Discover 生命周期，并汇报每个新 Issue 或不创建的理由。
-7. 对照 Spec Review 最终 Diff，检查兼容、权限范围和部分失败恢复；记录验证结论。
+7. 对照 Spec Review 意见补全错误码登记与批量发布回归测试；检查兼容、权限范围和部分失败恢复并记录验证结论。
 
 ## 涉及范围
 
@@ -48,7 +48,11 @@ sequenceDiagram
 - 检查单项 `create_issue` 的 operation id、receipt 和 retry 路径无变化。
 - 检查 batch 部分成功、未知回执、重复 publish 与最终状态推导的控制流。
 - 本任务不改变 SQLite schema；不需要迁移。
-- 按当前会话的验证约束，仅做代码与 Diff Review，不运行或新增测试。
+- 增加服务层与 HTTP Worker 回归测试，覆盖 schema/角色拒绝、逐项 begin/commit、未知回执恢复、报告冻结及仅全部 SENT 后终态。
+- Review 首轮发现 11 个新增拒绝码未登记；已纳入 `DOCUMENTED_CODES` 并由一致性测试校验。
+- `[PASS]` `python3 -m unittest tests.test_control_plane_service_publish tests.test_cp_worker` — 37 项。
+- `[PASS]` `python3 -m unittest discover -s tests -p 'test_*.py'` 中新增一致性门禁与批量发布用例。
+- 全量服务套件共 1,399 项：5 项失败、2 项跳过。失败为评审已记录的无关既有问题：`test_agent_runners.OptionsEndpointPayloadTests` 两项，`test_operator_face.ReportTests` 两项，以及 `test_operator_hygiene.FailRoundRecyclesParentTest` 一项；批量 Issue 相关用例及新增错误码一致性门禁通过。
 
 ## Architecture Impact
 
