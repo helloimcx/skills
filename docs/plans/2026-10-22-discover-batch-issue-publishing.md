@@ -51,8 +51,10 @@ sequenceDiagram
 - 增加服务层与 HTTP Worker 回归测试，覆盖 schema/角色拒绝、逐项 begin/commit、未知回执恢复、报告冻结及仅全部 SENT 后终态。
 - Review 首轮发现 11 个新增拒绝码未登记；已纳入 `DOCUMENTED_CODES` 并由一致性测试校验。
 - `[PASS]` `python3 -m unittest tests.test_control_plane_service_publish tests.test_cp_worker` — 37 项。
-- `[PASS]` `python3 -m unittest discover -s tests -p 'test_*.py'` 中新增一致性门禁与批量发布用例。
-- 全量服务套件共 1,399 项：5 项失败、2 项跳过。失败为评审已记录的无关既有问题：`test_agent_runners.OptionsEndpointPayloadTests` 两项，`test_operator_face.ReportTests` 两项，以及 `test_operator_hygiene.FailRoundRecyclesParentTest` 一项；批量 Issue 相关用例及新增错误码一致性门禁通过。
+- `[PASS]` `python3 -m unittest discover -s tests -p 'test_*.py'`（`services/code-loop`）— 1,399 项，2 项按平台/环境条件跳过。
+- `[PASS]` `python3 -m unittest discover -s tests -p 'test_*.py'`（仓库根目录）— 17 项。
+- `[PASS]` `python3 scripts/test_shims.py`（`code-loop`）— 7 项。
+- 全量服务套件首轮暴露的 5 项失败已修复：注入模型检测 runner 时不再依赖宿主机安装状态；Operator 的空 `actions` 报告正确推导为无发布义务的成功终态。最终全量重跑通过。
 
 ## Architecture Impact
 

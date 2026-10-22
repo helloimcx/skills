@@ -210,7 +210,11 @@ def detect_models(command, run_fn=None, which_fn=None, timeout=DEFAULT_MODELS_TI
     """Run a CLI's model listing and return its provider/model tokens. Any
     failure — missing binary, timeout, non-zero exit — is an empty list: a
     degraded dropdown must not break the endpoint that serves it."""
-    resolved = which_fn or shutil.which
+    # An injected runner is the command boundary in tests and embedded
+    # callers; unless a separate which_fn is supplied, treat its command as
+    # available so the injected process result is the only detection input.
+    resolved = which_fn or ((lambda command: command) if run_fn is not None
+                            else shutil.which)
     if not resolved(command[0]):
         return []
     argv = resolve_command(command, which_fn=resolved)

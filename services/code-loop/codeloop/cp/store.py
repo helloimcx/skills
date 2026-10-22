@@ -576,8 +576,11 @@ class Store(CommandStore):
                 raise ValueError('not a mapping')
             if result.get('actions') is not None:
                 actions = result['actions']
-                if not isinstance(actions, list) or not actions:
+                if not isinstance(actions, list):
                     return None
+                # An empty list is the normal no-publication report shape
+                # used by operator rounds. Non-empty actions are the Discover
+                # batch protocol and require every child outbox to be SENT.
                 for index, action in enumerate(actions):
                     if (not isinstance(action, dict)
                             or action.get('action') != 'create_issue'):
