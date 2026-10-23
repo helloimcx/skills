@@ -297,6 +297,7 @@ def _ui_listener(settings, coordinator):
         on_operator_options = operator_wiring.make_options(op_cfg, coordinator.dispatcher)
     handler = dash_serve.create(
         db, config=alerts, now=time.time,
+        db_factory=lambda: dash_store.connect_readonly(db_path),
         on_collect=dash_serve.make_refresh(db_path, root=root, config=alerts,
                                            on_alerts=on_alerts),
         on_reply=dash_serve.make_replier(db_path, root=root),

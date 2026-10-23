@@ -10,6 +10,14 @@ code-loop 的机器本地确定性运行时（服务单元）：Control Plane �
 - 平台事实只有一条爬取路径（`cp/observer.py` + `~/.code-loop/observer.sqlite`）：CP server 的 driver 线程按 `observer_period`（默认 120s）刷新，CP 与 dashboard 都读同一份；CP/collector 仅在 store 缺失或过旧时内联爬取兜底（fail-open，语义不变）。
 - **远程接入（可选）**：局域网/VPN 内其他开发机可作为 discover/handler/reviewer worker 接入。协调状态单点在服务端（SQLite/BEGIN IMMEDIATE/fencing/租约/outbox 语义零改动），worker 本地执行 worktree 校验、验证命令与 git push，经 TLS（ca 钉扎或 TOFU 指纹）+ 每机器 Bearer token 通信。统一管理（注册/授权/启停/吊销）只走服务端本机 `cp_server.py`，不开网络管理端点。契约与部署见 `skills/code-loop/references/control-plane.md` 远程模式一节。
 
+## 面板 SQLite 连接与 CPU 排查
+
+面板在启动时通过 `dash.schema.connect()` 初始化数据库。生产 HTTP 查询、POST 的项目/Issue 校验和后台快照刷新，每次通过 `connect_readonly()` 打开自己拥有的只读连接，在同一线程内完成查询、取完结果后关闭；采集和回复仍使用各自的写连接。只读连接不重复建表或切换 WAL。
+
+`serve.create(db, ..., db_factory=...)` 接受连接工厂；兼容的 `create(db, ...)` 调用由处理器内部锁保护完整查询，但调用方也必须避免在处理器外同时操作该连接。`check_same_thread=False` 只关闭 Python 的线程检查，不保证 SQLite 连接可以被并发使用。尤其 `THREADSAFE=2` 编译模式要求一个连接及其游标同一时刻只由一个线程使用（[SQLite 官方契约](https://sqlite.org/threadsafe.html)）。
+
+若服务持续占用多个 CPU 核心，先保留进程采样。2026-10-23 的故障中，约 600% CPU 对应 6 个线程停留在 `sqlite3_reset → sqlite3_db_release_memory → purgeableCacheShrink`；代码中存在无锁共用面板连接的缺陷。修复消除了这一危险访问模式，原生缓存内部异常的完整触发过程仍未确定。已经卡住的旧线程需要在应用修复后重启服务才能退出。
+
 ## 考题文件 `.code-loop/verify.json`（2026-09-17 起，考题唯一源）
 
 review 验证标准放在**各项目仓库**的这个文件里（仅两键；机器配置同名键降级为迁移回退）：

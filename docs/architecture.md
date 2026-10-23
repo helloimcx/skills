@@ -70,6 +70,10 @@ flowchart LR
     G --> H["Evidence report and stop"]
 ```
 
+## Integrated Code Loop Service
+
+The independently runnable `services/code-loop` package supplies the Control Plane and loopback dashboard; the `code-loop` skill delegates to it. Its dashboard initializes SQLite once, then gives each HTTP read, POST validation read and background snapshot recompute an operation-owned read-only connection. Queries fully materialize results before closing the connection. Legacy handlers using a supplied connection serialize reads with a handler-local lock; external users of that connection must also avoid overlap. Collector and action callbacks own their write connections. See [Code Loop architecture](architecture/modules/code-loop.md).
+
 ## Development and Validation
 
 - Root `README.md` is the public skill index.
