@@ -18,6 +18,14 @@ code-loop 的机器本地确定性运行时（服务单元）：Control Plane �
 
 若服务持续占用多个 CPU 核心，先保留进程采样。2026-10-23 的故障中，约 600% CPU 对应 6 个线程停留在 `sqlite3_reset → sqlite3_db_release_memory → purgeableCacheShrink`；代码中存在无锁共用面板连接的缺陷。修复消除了这一危险访问模式，原生缓存内部异常的完整触发过程仍未确定。已经卡住的旧线程需要在应用修复后重启服务才能退出。
 
+## 面板采集与读取优化
+
+`cp_server.py serve` 收到面板采集或 Operator `collect_refresh` 后，会启动受监督的 `dashboard.py collect` 子进程。子进程按 dashboard 数据库路径持有稳定的内核锁，锁覆盖平台采集、通知、Operator 告警接入和缓存构建；锁忙时返回 `skipped`，不会伪报本轮采集成功。进程退出会自动释放内核锁，`.collect.lock` 文件保留以避免锁 inode 分裂。子进程有默认 300 秒硬期限；`dashboard.json` 的 `collect_timeout_seconds` 可覆盖，范围为 1–3600 秒。父进程还会限制输出并回收超时或超量子进程。
+
+CP 六张运行态镜像以 CP id 为行身份（租约使用 resource），用内容哈希跳过不变写入；单项目更新由显式 SQLite 事务保护。源 CP 数据先在只读事务中完整物化，再关闭源库并写入 dashboard 库。兼容嵌入式 `dash.serve.make_refresh()` 保留调用方的 `on_alerts` 回调行为。
+
+采集完成后，服务为默认 `/api/items`、默认 Operator 台账和已知项目的 `/api/runtime?project=...` 生成 JSON 与 gzip 两种读模型。数据源 DML 触发器推进 `source_revision`；发布前重新核对版本，避免旧快照覆盖新数据。HTTP GET 只读缓存，缓存未命中或版本过期时直接运行实时 builder。带自定义参数的 URL、`fresh=1` 和动态端点继续走原有实时/十秒 stale-while-revalidate 路径。详情见 [面板性能架构记录](../../docs/architecture/changes/2026-10-23-code-loop-dashboard-performance.md)。
+
 ## 考题文件 `.code-loop/verify.json`（2026-09-17 起，考题唯一源）
 
 review 验证标准放在**各项目仓库**的这个文件里（仅两键；机器配置同名键降级为迁移回退）：
@@ -57,7 +65,7 @@ services/code-loop/
 │   │   ├── client.py         # worker 传输（TLS 钉扎/Bearer/无自动重试）
 │   │   ├── observer.py       # 观察层：全系统唯一爬取路径（增量、原始 JSON 保真，CP/dashboard 共用同一个 store）
 │   │   └── worker.py         # WorkerService（本地执行 + 远程协调，与 Service 同方法面；claim_raw 带 ttl/item）
-│   ├── dash/                 # 面板后端（store facade + schema/ingest/verdicts/views/health 分层 + serve/collect/notify；前端源码见 frontend/）
+│   ├── dash/                 # 面板后端（schema/ingest、serve/serving、collect/refresh；增量镜像、受监督采集和有限持久读模型）
 │   ├── agent.py              # worker agent：WS 常驻，收指令 → 本机执行预备链 → ack
 │   ├── agent_watch.py        # agent 的 liveness 半边（SpawnWatchMixin：spawn 启动窗口 + 进程死亡守望，2026-09-23 自 agent.py 拆出控行数；方法经混入仍是 WorkerAgent 成员）
 │   ├── agent_runners/        # coding agent 插件注册表（base 接口 + claude/opencode/pi 插件）：身份白名单/模型探测/argv 预设/会话输出解析的唯一源（claude_transcript=claude JSONL，opencode_storage=opencode JSON 存储，pi_transcript=pi JSONL）

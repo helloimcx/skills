@@ -9,6 +9,7 @@ import time
 import unittest
 from http.server import ThreadingHTTPServer
 from pathlib import Path
+from unittest.mock import patch
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
@@ -21,7 +22,7 @@ for _p in (str(_Path(__file__).resolve().parents[1]),
         _sys.path.insert(0, _p)
 
 from codeloop.cp.server import Coordinator
-from codeloop.dash import serve, store, verdicts
+from codeloop.dash import serve, serving, store, verdicts
 
 
 def _serve(httpd):
@@ -368,6 +369,45 @@ class ServeTests(unittest.TestCase):
         self.assertEqual(1, len(data['prs']))
         self.assertEqual('Approved for manual merge', data['prs'][0]['verdict'])
         self.assertEqual('a__b', data['issues'][0]['org_repo'])
+
+    def test_persistent_items_hit_skips_aggregate_and_gzip_work(self):
+        import gzip as gz
+        baseline = self.get('/api/items')
+        self.assertEqual(200, baseline[0])
+        serving.precompute(self.db.execute(
+            'PRAGMA database_list').fetchone()[2])
+        with patch.object(serve, '_items', side_effect=AssertionError('aggregate ran')), \
+                patch.object(serve.gzip, 'compress',
+                             side_effect=AssertionError('gzip recompressed')):
+            status, headers, body = self.get(
+                '/api/items', headers={'Accept-Encoding': 'gzip'})
+        self.assertEqual(200, status)
+        self.assertEqual('gzip', headers.get('Content-Encoding'))
+        self.assertEqual(json.loads(baseline[2].decode('utf-8')),
+                         json.loads(gz.decompress(body).decode('utf-8')))
+
+    def test_changed_source_never_falls_back_to_old_items_memory_snapshot(self):
+        serving.precompute(self.db.execute(
+            'PRAGMA database_list').fetchone()[2])
+        self.db.execute("INSERT INTO issues(project_id,number,state,title) "
+                        "VALUES (1,99,'open','arrived after precompute')")
+        data = self.json('/api/items')
+        self.assertIn(99, [row['number'] for row in data['issues']])
+
+    def test_fresh_items_request_bypasses_persistent_cache(self):
+        serving.precompute(self.db.execute(
+            'PRAGMA database_list').fetchone()[2])
+        with patch.object(serve, '_items', return_value={
+                'issues': [], 'prs': [], 'fresh': True}):
+            self.assertTrue(self.json('/api/items?fresh=1')['fresh'])
+
+    def test_unreadable_disposable_cache_falls_back_to_live_builder(self):
+        serving.precompute(self.db.execute(
+            'PRAGMA database_list').fetchone()[2])
+        self.db.execute('DROP TABLE serving_cache')
+        data = self.json('/api/items')
+        self.assertEqual([1], [row['number'] for row in data['issues']])
+        self.assertEqual([101], [row['number'] for row in data['prs']])
 
     def test_gzip_response_when_client_accepts(self):
         """issue #159（用户决策 1A 2A）：Accept-Encoding: gzip 时读端点返回

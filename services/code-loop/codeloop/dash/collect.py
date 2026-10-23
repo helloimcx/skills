@@ -83,21 +83,23 @@ def read_enabled(project_dir):
 
 
 def copy_runtime(db, pid, cp_db_path):
-    """Snapshot the project's control-plane SQLite (read-only) into the store."""
-    uri = 'file:%s?mode=ro' % Path(cp_db_path).as_posix()
+    """Read one consistent source snapshot, then atomically project it."""
+    uri = Path(cp_db_path).expanduser().resolve().as_uri() + '?mode=ro'
     source = sqlite3.connect(uri, uri=True)
     source.row_factory = sqlite3.Row
     try:
+        source.execute('BEGIN')
         present = {row[0] for row in source.execute(
             "SELECT name FROM sqlite_master WHERE type='table'")}
         runtime = {}
         for table, key in CP_TABLES.items():
             runtime[key] = ([dict(row) for row in source.execute('SELECT * FROM ' + table)]
                             if table in present else [])
-        store.replace_runtime(db, pid, runtime)
-        return {key: len(rows) for key, rows in runtime.items()}
+        source.commit()
     finally:
         source.close()
+    store.replace_runtime(db, pid, runtime)
+    return {key: len(rows) for key, rows in runtime.items()}
 
 
 def collect_project(db_path, config_path, now=None):
