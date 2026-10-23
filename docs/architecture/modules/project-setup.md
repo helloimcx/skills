@@ -16,6 +16,7 @@
 - Establish one managed README block that directly shows the latest validated system architecture diagram without overwriting unrelated README content.
 - Configure and execute the five requested source-quality categories as hard initialization gates: cyclomatic complexity, duplicate-code rate, dependency-cycle count, dead-code count, and long-function/large-file counts.
 - Verify the mandatory static-quality gates, other applicable quality gates, public success/failure paths, and a candidate-only clean-environment bootstrap.
+- Establish fast local feedback and a shared complete verification entrypoint, with stage-specific execution and blocking rules. Keep CI configuration, remote execution, and merge-protection evidence separate.
 - Report evidence and end the initialization task.
 
 ## Boundaries and Non-responsibilities
@@ -37,6 +38,7 @@
 | `references/production-baseline.md` | Common production baseline loaded before designing the target |
 | `references/project-profiles.md` | Only the section matching the selected project type |
 | `references/architecture-governance.md` | Persistent-rule merge behavior, cross-Agent routing, provider manifest, history, and README initialization contract |
+| `references/jenkins.md` | Optional Jenkins adaptation loaded only when Jenkins is selected; repository commands, PR integration, and evidence boundaries |
 | `references/verification.md` | Applicable test, quality, public-path, clean-environment, and evidence rules |
 | `assets/architecture-maintenance.md` | Provider-neutral on-demand policy adapted into the initialized repository |
 
