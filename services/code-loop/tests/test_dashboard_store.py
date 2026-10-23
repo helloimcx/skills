@@ -6,6 +6,7 @@ import json
 import sqlite3
 import tempfile
 import unittest
+from decimal import localcontext
 from pathlib import Path
 
 import sys as _sys
@@ -17,6 +18,7 @@ for _p in (str(_Path(__file__).resolve().parents[1]),
         _sys.path.insert(0, _p)
 
 from codeloop.dash import store, verdicts
+from codeloop.dash.ingest import _runtime_identity_key
 from _dashboard_store_base import (StoreTestCase, agent_comment, comment, epoch,
                                    gitea_issue, gitea_pr, ts)
 
@@ -52,6 +54,54 @@ class SchemaTests(StoreTestCase):
         row = self.db.execute('SELECT * FROM sync_log').fetchone()
         self.assertEqual(1, row['ok'])
         self.assertEqual({'issues': 1}, json.loads(row['stats']))
+
+    def test_legacy_runtime_row_backfills_hash_without_rewriting_facts(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'legacy.sqlite'
+            legacy = sqlite3.connect(str(path))
+            legacy.execute('''CREATE TABLE work_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, project_id INTEGER NOT NULL,
+                cp_id INTEGER NOT NULL,key TEXT,kind TEXT,state TEXT,priority INTEGER,
+                version INTEGER,payload TEXT,resources TEXT,created_at TEXT,
+                UNIQUE(project_id,cp_id))''')
+            legacy.execute("INSERT INTO work_items(project_id,cp_id,key,kind,state,priority,"
+                           "version,payload,resources,created_at) "
+                           "VALUES (1,7,'k','handler','READY',1,2,'{}','[]','t')")
+            legacy.commit()
+            legacy.close()
+            db = store.connect(path)
+            try:
+                runtime = {
+                    'work_items': [{'id': '007', 'key': 'k', 'kind': 'handler',
+                                    'state': 'READY', 'priority': 1, 'version': 2,
+                                    'payload': '{}', 'resources': [], 'created_at': 't'}],
+                    'executions': [], 'leases': [], 'outbox': [],
+                    'cp_events': [], 'commands': [],
+                }
+                dml = []
+                db.set_trace_callback(dml.append)
+                store.replace_runtime(db, 1, runtime)
+                db.set_trace_callback(None)
+                self.assertEqual(1, db.execute(
+                    'SELECT id FROM work_items WHERE project_id=1').fetchone()[0])
+                self.assertIsNotNone(db.execute(
+                    'SELECT content_hash FROM work_items WHERE project_id=1').fetchone()[0])
+                mirror_writes = [sql.lower() for sql in dml if
+                                 sql.lstrip().upper().startswith(('INSERT', 'UPDATE', 'DELETE'))
+                                 and 'work_items' in sql.lower()]
+                self.assertEqual(1, len(mirror_writes))
+                self.assertIn('update work_items set content_hash=', mirror_writes[0])
+                dml.clear()
+                db.set_trace_callback(dml.append)
+                store.replace_runtime(db, 1, runtime)
+                db.set_trace_callback(None)
+                self.assertEqual([], [sql for sql in dml if
+                                     sql.lstrip().upper().startswith(('INSERT', 'UPDATE', 'DELETE'))
+                                     and any(table in sql.lower() for table in
+                                             ('work_items', 'executions', 'leases',
+                                              'outbox', 'cp_events', 'commands'))])
+            finally:
+                db.close()
 
 
 class SnapshotTests(StoreTestCase):
@@ -496,6 +546,180 @@ class LoopAlertTests(StoreTestCase):
         row = db_row = self.db.execute('SELECT * FROM executions').fetchone()
         self.assertIsNone(row['worktree'])
         self.assertEqual('RUNNING', row['state'])
+
+    def test_replace_runtime_identical_snapshot_has_no_mirror_dml(self):
+        pid = self.pid()
+        runtime = {
+            'work_items': [{'id': 7, 'key': 'issue:7', 'kind': 'handler',
+                            'state': 'READY', 'priority': 2, 'version': 1,
+                            'payload': {'title': 'ship'}, 'resources': ['cpu'],
+                            'created_at': '2026-10-20T00:00:00Z'}],
+            'executions': [{'id': 8, 'item_id': 7, 'worker': 'box/handler',
+                            'state': 'RUNNING', 'result': None, 'worktree': 'wt',
+                            'branch': 'main', 'head': 'abc', 'expires_at': None,
+                            'created_at': '2026-10-20T00:01:00Z'}],
+            'leases': [{'resource': 'project/a', 'execution_id': 8,
+                        'token': 'first-token', 'expires_at': 'later'}],
+            'outbox': [{'id': 9, 'execution_id': 8, 'action': 'comment',
+                        'state': 'SENT', 'receipt': '{}'}],
+            'cp_events': [{'id': 10, 'kind': 'claim', 'payload': '{}',
+                           'created_at': '2026-10-20T00:02:00Z'}],
+            'commands': [{'id': 11, 'action': 'review_round', 'number': 7,
+                          'state': 'RUNNING', 'execution': 'e1', 'agent': 'a',
+                          'model': 'm', 'created_at': 1.0}],
+        }
+        store.replace_runtime(self.db, pid, runtime)
+        ids = {table: self.db.execute('SELECT id FROM %s WHERE project_id=?' % table,
+                                      (pid,)).fetchone()[0]
+               for table in ('work_items', 'executions', 'outbox', 'cp_events', 'commands')}
+        statements = []
+        self.db.set_trace_callback(statements.append)
+        try:
+            store.replace_runtime(self.db, pid, runtime)
+        finally:
+            self.db.set_trace_callback(None)
+        mirror_dml = [sql for sql in statements if sql.lstrip().upper().startswith(
+            ('INSERT', 'UPDATE', 'DELETE')) and any(
+                table in sql.lower() for table in
+                ('work_items', 'executions', 'leases', 'outbox', 'cp_events', 'commands'))]
+        self.assertEqual([], mirror_dml)
+        for table, row_id in ids.items():
+            self.assertEqual(row_id, self.db.execute(
+                'SELECT id FROM %s WHERE project_id=?' % table, (pid,)).fetchone()[0])
+
+    def test_replace_runtime_updates_lease_content_in_place(self):
+        pid = self.pid()
+        first = {'work_items': [], 'executions': [],
+                 'leases': [{'resource': 'project/a', 'execution_id': 8,
+                             'token': 'old', 'expires_at': 'soon'}],
+                 'outbox': [], 'events': [], 'commands': []}
+        store.replace_runtime(self.db, pid, first)
+        before = self.db.execute('SELECT id FROM leases WHERE project_id=?',
+                                 (pid,)).fetchone()['id']
+        second = dict(first, leases=[dict(first['leases'][0], token='rotated')])
+        store.replace_runtime(self.db, pid, second)
+        row = self.db.execute('SELECT id, token FROM leases WHERE project_id=?',
+                              (pid,)).fetchone()
+        self.assertEqual((before, 'rotated'), (row['id'], row['token']))
+
+    def test_replace_runtime_handles_text_ids_and_collapses_legacy_leases(self):
+        pid = self.pid()
+        self.db.execute("INSERT INTO leases(project_id,resource,execution_cp_id,token) "
+                        "VALUES (?,?,?,?)", (pid, 'r1', 2, 'old'))
+        self.db.execute("INSERT INTO leases(project_id,resource,execution_cp_id,token) "
+                        "VALUES (?,?,?,?)", (pid, 'r1', 2, 'old'))
+        runtime = {
+            'work_items': [{'id': '007', 'key': 'k', 'kind': 'handler',
+                            'state': 'READY', 'payload': '{}'},
+                           {'id': '9007199254740992', 'key': 'large-a',
+                            'kind': 'handler', 'state': 'READY', 'payload': '{}'},
+                           {'id': '9007199254740993', 'key': 'large-b',
+                            'kind': 'handler', 'state': 'READY', 'payload': '{}'}],
+            'executions': [{'id': 'execution-x', 'item_id': '007',
+                            'state': 'RUNNING'}],
+            'leases': [{'resource': 'r1', 'execution_id': 2,
+                        'token': 'new', 'expires_at': None},
+                       {'resource': '7', 'execution_id': 3,
+                        'token': 'seven', 'expires_at': None},
+                       {'resource': '007', 'execution_id': 4,
+                        'token': 'padded-seven', 'expires_at': None}],
+            'outbox': [], 'cp_events': [], 'commands': [],
+        }
+        store.replace_runtime(self.db, pid, runtime)
+        self.assertEqual(7, self.db.execute(
+            'SELECT cp_id FROM work_items WHERE project_id=?', (pid,)).fetchone()[0])
+        self.assertEqual([7, 9007199254740992, 9007199254740993], [row[0] for row in
+            self.db.execute('SELECT cp_id FROM work_items WHERE project_id=? ORDER BY id',
+                            (pid,))])
+        self.assertEqual('execution-x', self.db.execute(
+            'SELECT cp_id FROM executions WHERE project_id=?', (pid,)).fetchone()[0])
+        self.assertEqual(3, self.db.execute(
+            'SELECT COUNT(*) FROM leases WHERE project_id=?', (pid,)).fetchone()[0])
+        tokens = {row['resource']: row['token'] for row in self.db.execute(
+            'SELECT resource,token FROM leases WHERE project_id=?', (pid,))}
+        self.assertEqual({'r1': 'new', '7': 'seven', '007': 'padded-seven'}, tokens)
+
+    def test_runtime_numeric_identity_is_exact_and_unstorable_ids_fail_atomically(self):
+        first = '12345678901234567890123456789012'
+        second = '12345678901234567890123456789013'
+        with localcontext() as context:
+            context.prec = 4
+            self.assertNotEqual(_runtime_identity_key(first),
+                                _runtime_identity_key(second))
+
+        pid = self.pid()
+        with self.assertRaisesRegex(ValueError, 'outside SQLite INTEGER range'):
+            store.replace_runtime(self.db, pid, {
+                'work_items': [{'id': first, 'key': 'oversized', 'kind': 'handler',
+                                'state': 'READY'}],
+                'executions': [], 'leases': [], 'outbox': [], 'events': [],
+                'commands': [],
+            })
+        self.assertEqual(0, self.db.execute(
+            'SELECT COUNT(*) FROM work_items WHERE project_id=?', (pid,)).fetchone()[0])
+
+    def test_replace_runtime_only_writes_changed_identities(self):
+        pid = self.pid()
+        original = {
+            'work_items': [{'id': 1, 'key': 'k', 'kind': 'handler', 'state': 'READY',
+                            'priority': 1, 'version': 1, 'payload': '{}',
+                            'resources': '{}', 'created_at': 't1'}],
+            'executions': [],
+            'leases': [{'resource': 'r1', 'execution_id': 1,
+                        'token': 't1', 'expires_at': None}],
+            'outbox': [], 'cp_events': [], 'commands': [],
+        }
+        store.replace_runtime(self.db, pid, original)
+        changed = dict(original,
+                       work_items=[dict(original['work_items'][0], state='RUNNING')],
+                       leases=[])
+        statements = []
+        self.db.set_trace_callback(statements.append)
+        try:
+            store.replace_runtime(self.db, pid, changed)
+        finally:
+            self.db.set_trace_callback(None)
+        dml = [sql.lower() for sql in statements if sql.lstrip().upper().startswith(
+            ('INSERT', 'UPDATE', 'DELETE')) and any(
+                table in sql.lower() for table in
+                ('work_items', 'executions', 'leases', 'outbox', 'cp_events', 'commands'))]
+        self.assertEqual(2, len(dml))
+        self.assertTrue(any('update work_items' in sql for sql in dml))
+        self.assertTrue(any('delete from leases' in sql for sql in dml))
+
+    def test_replace_runtime_preserves_nested_transaction_ownership(self):
+        pid = self.pid()
+        runtime = self.runtime('handler', 19)
+        self.db.execute('BEGIN')
+        self.db.execute("UPDATE projects SET base='caller-owned' WHERE id=?", (pid,))
+        store.replace_runtime(self.db, pid, runtime)
+        self.assertTrue(self.db.in_transaction)
+        self.db.rollback()
+        self.assertEqual('', self.db.execute(
+            'SELECT base FROM projects WHERE id=?', (pid,)).fetchone()[0])
+        self.assertEqual(0, self.db.execute(
+            'SELECT COUNT(*) FROM work_items WHERE project_id=?', (pid,)).fetchone()[0])
+
+    def test_replace_runtime_rolls_back_all_tables_on_mid_project_failure(self):
+        pid = self.pid()
+        original = self.runtime('handler', 19)
+        original['commands'] = []
+        original['leases'] = [{'resource': 'project/a', 'execution_id': 1,
+                               'token': 't1', 'expires_at': None}]
+        store.replace_runtime(self.db, pid, original)
+        self.db.execute("CREATE TRIGGER fail_execution_update BEFORE UPDATE ON executions "
+                        "BEGIN SELECT RAISE(ABORT, 'injected failure'); END")
+        changed = self.runtime('reviewer', 20)
+        changed['commands'] = []
+        changed['leases'] = []
+        with self.assertRaises(sqlite3.IntegrityError):
+            store.replace_runtime(self.db, pid, changed)
+        self.assertEqual('handler', self.db.execute(
+            'SELECT kind FROM work_items WHERE project_id=?', (pid,)).fetchone()[0])
+        self.assertEqual(1, self.db.execute(
+            'SELECT COUNT(*) FROM leases WHERE project_id=?', (pid,)).fetchone()[0])
+        self.assertEqual(1, self.db.execute(
+            'SELECT COUNT(*) FROM executions WHERE project_id=?', (pid,)).fetchone()[0])
 
     def test_loop_health_reports_last_activity(self):
         pid = self.pid()
