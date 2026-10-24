@@ -111,14 +111,16 @@ Skill 的 `scripts/` 目录提供路径稳定的委托 CLI 入口（自动路由
 5. **维护反坍缩台账**：更新 `.agents/loops/state/handler-issues.md`，执行 `python scripts/check_ledger.py` 确保每一条 Open Issue 独立占有一行，严禁合并为批量行。
 6. **报告与发布**：调用 `report` 与 `publish`。
 
-### C. Discover 轮（事实发现与就绪编排）
+### C. Discover 轮（问题发现、Issue 创建与就绪编排）
 > 详见 [references/discover.md](references/discover.md)
 
-1. **增量抓取**：
+1. **同步既有事实**：
    ```bash
    python scripts/control_plane.py sync
    ```
-2. **刷新事实**：将 GitHub 平台的 PRs 与 Issues 编排入 CP 就绪队列表。
+2. **检查并核对问题**：检查仓库代码和近期变更，结合同步到的开放 Issues/PRs，找出有明确证据、尚未被已有工作覆盖的问题；不得把猜测或纯偏好包装成缺陷。
+3. **创建 Issue 或记录结论**：每轮可创建多个优先级较高、证据充分且去重后的 GitHub Issues（CP 每批上限 10 条）。先 `claim --loop discover`，再按 `references/discover.md` 使用 CP `report` / `publish` 发布；无合适问题时报告结论，不创建 Issue。
+4. **检查队列**：确认新 Issue 已同步为 handler 队列项，并汇报 Issue 编号或未创建的客观原因。Discover 只检查和发布 Issue，不修改仓库代码，也不领取 handler/reviewer 项。
 
 ### D. Operator 轮（监控巡检与自愈升级）
 > 详见 [references/operator.md](references/operator.md)
