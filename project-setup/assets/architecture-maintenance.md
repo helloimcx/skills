@@ -57,7 +57,7 @@ For `Architecture Impact: Required`:
 6. Publish the validated current artifacts atomically (including `.html` interactive canvas and dual-theme `.light.png` / `.dark.png` / `.png` or SVG). A failed candidate must not replace the last-known-good diagram.
 7. Update `docs/architecture/overview.md` to keep the Architecture Matrix synchronized.
 8. Update exactly one managed README block so it directly shows the latest valid static diagram (or dual-theme `<picture>` block) or inline Mermaid fallback.
-9. Run repository documentation/link checks, `lint:arch`, and the ordinary complete quality suite. Recheck the final diff for agreement among code, current facts, history, provider source/receipt, overview matrix, and README.
+9. During iteration, run repository documentation/link checks, `lint:arch`, and affected checks/tests as appropriate. At change completion and before merge, run the repository's single complete quality entrypoint; a quick or affected-only result cannot substitute for the complete suite. Recheck the final diff for agreement among code, current facts, history, provider source/receipt, overview matrix, and README.
 
 ## README Contract
 
