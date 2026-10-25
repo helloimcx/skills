@@ -274,23 +274,27 @@ def _check_pr_targets(source, action, p, decision):
 
 
 def authorize(service, item, source, result):
-    action, p = result['action'], result.get('payload', {})
-    if not isinstance(p, dict):
-        raise ValueError('INVALID_PAYLOAD')
-    if action not in _ACTION_SCOPE[item['kind']]:
-        raise ValueError('ROLE_ACTION_FORBIDDEN')
-    _check_payload(action, p, item['kind'])
     validator = getattr(service.platform, 'validate_action', None)
-    if validator is not None:
-        validator(action, p)
-    snapshot, issue = None, None
-    if action in ('comment_issue', 'close_issue'):
-        snapshot = service.snapshot()
-        issue = next((i for i in snapshot['issues'] if i['number'] == p.get('number')), None)
-        if issue is None:
-            raise ValueError('ISSUE_REQUIRED_NOT_PR')
-    _check_close_target(service, item, source, action, p, snapshot, issue)
-    _check_pr_targets(source, action, p, result['decision'])
+    actions = result.get('actions')
+    if actions is None:
+        actions = [{'action': result['action'], 'payload': result.get('payload', {})}]
+    for entry in actions:
+        action, p = entry['action'], entry['payload']
+        if not isinstance(p, dict):
+            raise ValueError('INVALID_PAYLOAD')
+        if action not in _ACTION_SCOPE[item['kind']]:
+            raise ValueError('ROLE_ACTION_FORBIDDEN')
+        _check_payload(action, p, item['kind'])
+        if validator is not None:
+            validator(action, p)
+        snapshot, issue = None, None
+        if action in ('comment_issue', 'close_issue'):
+            snapshot = service.snapshot()
+            issue = next((i for i in snapshot['issues'] if i['number'] == p.get('number')), None)
+            if issue is None:
+                raise ValueError('ISSUE_REQUIRED_NOT_PR')
+        _check_close_target(service, item, source, action, p, snapshot, issue)
+        _check_pr_targets(source, action, p, result['decision'])
 
 
 def _require_independent_judgment(service, e, context, error):
@@ -377,7 +381,7 @@ def _require_green_evidence(service, e, context):
 
 # -- report-side validation (kept here so Service.report stays orchestration)
 
-_REPORT_FIELDS = {'decision', 'reviewer', 'summary', 'action', 'payload', 'coverage', 'gate'}
+_REPORT_FIELDS = {'decision', 'reviewer', 'summary', 'action', 'payload', 'actions', 'coverage', 'gate'}
 _EXPECTED_DECISIONS = {
     'discover': ('CONFIRMED', 'REJECTED', 'NEEDS_MORE_EVIDENCE'),
     'handler': ('APPROVE', 'REQUEST_CHANGES', 'BLOCKED', 'RESOLVED'),
@@ -478,6 +482,37 @@ def validate_report(service, e, item, payload, eid, result):
     if not all(isinstance(result.get(k), str) and result[k].strip()
                for k in ('decision', 'reviewer', 'summary')):
         raise ValueError('DECISION_REVIEWER_SUMMARY_REQUIRED')
+    if 'actions' in result:
+        if 'action' in result or 'payload' in result:
+            raise ValueError('ACTION_FIELDS_MUTUALLY_EXCLUSIVE')
+        actions = result['actions']
+        if item['kind'] != 'discover' or not isinstance(actions, list) or not 2 <= len(actions) <= 10:
+            raise ValueError('INVALID_ACTIONS')
+        if result['decision'] != 'CONFIRMED':
+            raise ValueError('CONFIRMED_REQUIRED')
+        seen = set()
+        total_bytes = 0
+        for entry in actions:
+            if not isinstance(entry, dict) or set(entry) != {'action', 'payload'}:
+                raise ValueError('INVALID_ACTION_ENTRY')
+            if entry['action'] != 'create_issue':
+                raise ValueError('BATCH_ACTION_FORBIDDEN')
+            p = entry['payload']
+            if not isinstance(p, dict):
+                raise ValueError('INVALID_PAYLOAD')
+            _check_payload(entry['action'], p, item['kind'])
+            if len(p['title']) > 256 or len(p['title'].encode('utf-8')) > 256:
+                raise ValueError('INVALID_ISSUE_TITLE_LENGTH')
+            body_bytes = len(p['body'].encode('utf-8'))
+            if body_bytes > 65536:
+                raise ValueError('INVALID_ISSUE_BODY_LENGTH')
+            total_bytes += len(p['title'].encode('utf-8')) + body_bytes
+            fingerprint = (p['title'].strip().casefold(), p['body'].strip())
+            if fingerprint in seen:
+                raise ValueError('DUPLICATE_BATCH_ISSUE')
+            seen.add(fingerprint)
+        if total_bytes > 500000:
+            raise ValueError('BATCH_PAYLOAD_TOO_LARGE')
     gate = result.get('gate')
     if gate is not None:
         validate_gate_shape(gate)
