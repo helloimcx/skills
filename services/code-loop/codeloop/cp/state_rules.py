@@ -485,6 +485,10 @@ DOCUMENTED_CODES = {
     'PUBLICATION_IN_PROGRESS': '意图行竞态出现 ⇒ 重试走对账（不双发）',
     'PUSH_CONTEXT_CHANGED': 'push 前 worktree/branch/head 必须与绑定一致（防漂移推错）',
     'COMMAND_STATE': 'WS 派发面对 CAS 失败的服务层包装（指令非 CLAIMED 由该机器持有）',
+    'EVENT_CURSOR_INVALID': '事件回放游标必须是非负整数',
+    'EVENT_LIMIT_INVALID': '事件回放分页数量必须在允许范围内',
+    'EVENT_SOURCE_INVALID': '事件 source ID 必须是非空字符串',
+    'WORKER_STALL_THRESHOLD_INVALID': 'worker 停摆阈值必须是正数',
 }
 
 # 非理由码的机器可读字面量（补充扫描面捞到的任务/判定/fail_reason 值）——

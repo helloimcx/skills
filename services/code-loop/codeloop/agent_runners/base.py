@@ -245,6 +245,9 @@ class Runner:
     #: a listing command gets no picker, and a model sent next to it is a
     #: mistake that is refused loudly rather than silently dropped.
     models_command = None
+    #: Only runtimes with native child-agent orchestration can be registered
+    #: for the worker Coordinator path. The CLI remains per-task, not resident.
+    supports_subagents = False
 
     @property
     def has_models(self):
@@ -265,6 +268,22 @@ class Runner:
         message the UI surfaces verbatim (AGENT_MISSING / MODEL_UNAVAILABLE /
         INVALID_COMMAND) — the executor's own gate, ahead of any claim."""
         raise NotImplementedError
+
+    def coordinator_flags(self, task_type=None):
+        """Runtime CLI flags that keep a Coordinator within its task role."""
+        return []
+
+    def coordinator_environment(self, task_type=None):
+        """Per-process runtime configuration for a scoped Coordinator."""
+        return None
+
+    def coordinator_argv(self, model=None, task_type=None,
+                         which_fn=None, run_fn=None):
+        """Spawn a fresh Coordinator session for one typed worker task."""
+        if not self.supports_subagents:
+            raise ValueError('SUBAGENT_UNSUPPORTED: %s' % self.id)
+        argv = self.argv(model, which_fn=which_fn, run_fn=run_fn)
+        return argv + self.coordinator_flags(task_type) if argv is not None else None
 
     # -- output face ---------------------------------------------------------
     def resolve_session(self, repo_cwd, exec_id, created_at):

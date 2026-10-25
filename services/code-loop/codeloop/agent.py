@@ -17,16 +17,23 @@ import os
 from pathlib import Path
 import queue
 import random
+import shutil
+import subprocess
 import threading
 import time
 
 from . import agent_runners, review_round, trigger
+from .cli import resolve_command
 from .operator import round as operator_round
+from .worker_task_protocol import (MAINTENANCE_ACTIONS,
+                                  validate_worker_task)
+from .worker_task_store import WorkerTaskRunStore
 from .cp import ws as ws_proto
 from .cp.client import Client, ClientError
 from .cp.commands import validated_spawn_options
 from .cp.ws import FrameReader
-from .cp.runtime import load_global_worker_config, load_worker_server
+from .cp.runtime import (load_global_worker_config,
+                         load_worker_coordinator_config, load_worker_server)
 from .cp.worker import WorkerService
 from .agent_watch import (SpawnWatchMixin, SPAWN_GRACE_SECONDS,
                           SPAWN_GRACE_POLL_SECONDS, _pid_alive)
@@ -35,6 +42,15 @@ from .dash import collect, store as dash_store
 MAX_BACKOFF_SECONDS = 30.0
 _CLOSED = object()   # queue sentinel: the frame reader is gone
 _registration_fields = ('repo_cwd', 'entry_doc', 'rules_doc', 'spawn_command')
+
+
+class WorkerTaskExecutionError(Exception):
+    """A task failure that may need to release a prepared CP execution."""
+
+    def __init__(self, message, execution_id=None, token=None):
+        super().__init__(message)
+        self.execution_id = execution_id
+        self.token = token
 
 # Which rounds stream their own CLI log instead of a claude transcript: an
 # opencode round keeps no transcript to bind, so its log IS the stream.
@@ -120,7 +136,10 @@ class WorkerAgent(SpawnWatchMixin):
                  spawn_grace_seconds=SPAWN_GRACE_SECONDS,
                  spawn_grace_poll_seconds=SPAWN_GRACE_POLL_SECONDS,
                  capability_refresh_seconds=CAPABILITY_REFRESH_SECONDS,
-                 capability_options_fn=None):
+                 capability_options_fn=None, worker_task_executor=None,
+                 worker_task_store_factory=None,
+                 worker_task_thread_factory=None, agent_run_fn=None,
+                 pid_alive_fn=None, agent_popen_fn=None):
         self.client = client or Client(
             {'url': server_url, 'token_env': 'CODE_LOOP_CP_TOKEN'}, token=token)
         self.db_path = db_path or str(collect.DEFAULT_DB)
@@ -137,7 +156,18 @@ class WorkerAgent(SpawnWatchMixin):
         self.spawn_grace_poll_seconds = spawn_grace_poll_seconds
         self.capability_refresh_seconds = capability_refresh_seconds
         self.capability_options_fn = capability_options_fn
+        self.worker_task_executor = worker_task_executor
+        self.worker_task_store_factory = worker_task_store_factory
+        self.worker_task_thread_factory = worker_task_thread_factory or threading.Thread
+        self.agent_run_fn = agent_run_fn or subprocess.run
+        self.agent_popen_fn = agent_popen_fn or subprocess.Popen
+        self.pid_alive_fn = pid_alive_fn or _pid_alive
+        self._task_run_store = None
+        self._task_run_store_lock = threading.Lock()
+        self._task_recovery_started = False
         self._capability = None   # last-known snapshot; reconnecting hellos announce it
+        self._channel_connected = False
+        self._connected_since = None
 
     # -- machine-local facts -------------------------------------------------
     def _load_registration(self, project):
@@ -146,7 +176,8 @@ class WorkerAgent(SpawnWatchMixin):
         db = dash_store.connect(self.db_path)
         try:
             row = db.execute(
-                'SELECT config_path, repo_cwd, entry_doc, rules_doc, spawn_command '
+                'SELECT config_path, repo_cwd, entry_doc, rules_doc, spawn_command, '
+                'coordinator_agent,coordinator_model '
                 'FROM projects WHERE org_repo=?', (project,)).fetchone()
         finally:
             db.close()
@@ -165,6 +196,86 @@ class WorkerAgent(SpawnWatchMixin):
             raise review_round.PrepareError(
                 403, 'REGISTER_INVALID: worker config: %s: %s'
                 % (type(exc).__name__, exc)) from None
+
+    def _task_registration(self, project, require_handler=False):
+        if project is None:
+            return None
+        row = self.registration_loader(project)
+        if row is None:
+            raise review_round.PrepareError(
+                403, 'NOT_REGISTERED: worker has no local project registration for %s'
+                % project)
+        row = dict(row)
+        row.setdefault('org_repo', project)
+        repo = Path(row.get('repo_cwd') or '')
+        if not repo.is_dir():
+            raise review_round.PrepareError(
+                403, 'REGISTER_INVALID: repo_cwd: %s' % repo)
+        if require_handler:
+            missing = [name for name in _registration_fields if not row.get(name)]
+            if missing:
+                raise review_round.PrepareError(
+                    403, 'NOT_REGISTERED: %s' % ','.join(missing))
+            for name in ('entry_doc', 'rules_doc'):
+                if not Path(row[name]).is_file():
+                    raise review_round.PrepareError(
+                        403, 'REGISTER_INVALID: %s: %s' % (name, row[name]))
+        if isinstance(row.get('spawn_command'), str):
+            try:
+                row['spawn_command'] = json.loads(row['spawn_command'])
+            except ValueError as exc:
+                raise review_round.PrepareError(
+                    403, 'REGISTER_INVALID: spawn_command: %s' % exc) from None
+        return row
+
+    def _coordinator_runtime(self, row, cfg, task_type):
+        project = row and row.get('org_repo')
+        agent_name = ((row or {}).get('coordinator_agent')
+                      or (cfg or {}).get('coordinator_agent'))
+        model = ((row or {}).get('coordinator_model')
+                 or (cfg or {}).get('coordinator_model'))
+        if agent_name is None:
+            try:
+                machine = load_worker_coordinator_config(project=project)
+            except Exception as exc:
+                raise review_round.PrepareError(
+                    403, 'COORDINATOR_CONFIG_INVALID: %s' % exc) from None
+            agent_name = machine.get('coordinator_agent')
+            model = model or machine.get('coordinator_model')
+        if agent_name is None:
+            raise review_round.PrepareError(
+                403, 'COORDINATOR_NOT_REGISTERED: configure coordinator_agent '
+                'on this worker or project')
+        try:
+            argv = agent_runners.coordinator_argv(
+                agent_name, model, task_type=task_type)
+        except ValueError as exc:
+            raise review_round.PrepareError(403, str(exc)) from None
+        runner = agent_runners.REGISTRY.get(agent_name)
+        if argv is None:
+            command = (row or {}).get('spawn_command') or list(trigger.DEFAULT_COMMAND)
+            if isinstance(command, str):
+                try:
+                    command = json.loads(command)
+                except ValueError:
+                    raise review_round.PrepareError(
+                        403, 'COORDINATOR_COMMAND_INVALID: spawn_command is not valid JSON') from None
+            if (not isinstance(command, (list, tuple)) or not command
+                    or not isinstance(command[0], str)
+                    or (not Path(command[0]).is_file()
+                        and shutil.which(command[0]) is None)):
+                raise review_round.PrepareError(
+                    403, 'COORDINATOR_RUNTIME_MISSING: %s'
+                    % (command[0] if isinstance(command, (list, tuple)) and command
+                       else 'spawn_command'))
+            try:
+                argv = resolve_command(command)
+            except Exception as exc:
+                raise review_round.PrepareError(
+                    403, 'COORDINATOR_COMMAND_INVALID: %s: %s'
+                    % (type(exc).__name__, exc)) from None
+            argv = list(argv) + runner.coordinator_flags(task_type)
+        return agent_name, model, argv
 
     def _checked_registration(self, project):
         row = self.registration_loader(project)
@@ -215,6 +326,9 @@ class WorkerAgent(SpawnWatchMixin):
                 # level store, no project coordinator/worktree/bind) — see
                 # operator/round.py. Nothing below applies to it.
                 operator_round.execute_operator_round(self, command)
+                return
+            if action == 'worker_task':
+                self._receive_worker_task(command)
                 return
             if action not in ROUND_LOOPS:
                 raise review_round.PrepareError(
@@ -302,6 +416,199 @@ class WorkerAgent(SpawnWatchMixin):
                                       'message': str(exc)}), flush=True)
             self._start_liveness_watch(project, command_id, claim, info)
 
+    def _local_task_store(self):
+        with self._task_run_store_lock:
+            if self._task_run_store is None:
+                if self.worker_task_store_factory is not None:
+                    self._task_run_store = self.worker_task_store_factory()
+                else:
+                    db_path = Path(self.db_path)
+                    self._task_run_store = WorkerTaskRunStore(
+                        db_path.with_name('worker-tasks.sqlite'))
+            return self._task_run_store
+
+    def _report_worker_task(self, task_id, state, *, session_id=None,
+                            execution_id=None, token=None, result=None,
+                            fail_reason=None):
+        body = {'task': task_id, 'state': state}
+        if session_id:
+            body['session_id'] = session_id
+        if execution_id:
+            body['execution_id'] = execution_id
+        if token is not None:
+            body['token'] = token
+        if result is not None:
+            body['result'] = result
+        if fail_reason:
+            body['fail_reason'] = fail_reason
+        try:
+            self.client.call('POST', '/api/v1/worker-tasks/report', body)
+        except Exception as exc:
+            print(json.dumps({'ok': False, 'code': 'WORKER_TASK_REPORT_FAILED',
+                              'task': task_id,
+                              'message': '%s: %s' % (type(exc).__name__, exc)}),
+                  flush=True)
+
+    def _record_worker_task_claim(self, task_id, execution_id, token, worktree):
+        record = self._local_task_store().update(
+            task_id, 'RUNNING', execution_id=execution_id,
+            claim_token=token, worktree=worktree, now=self.clock())
+        if record is not None:
+            self._report_worker_task(task_id, 'RUNNING',
+                                     execution_id=execution_id, token=token)
+
+    def _record_worker_task_runtime(self, task_id, pid, log_path,
+                                    execution_id=None, token=None, worktree=None):
+        record = self._local_task_store().update(
+            task_id, 'RUNNING', runtime_pid=pid, log_path=log_path,
+            execution_id=execution_id, claim_token=token, worktree=worktree,
+            now=self.clock())
+        if record is not None:
+            self._report_worker_task(task_id, 'RUNNING',
+                                     execution_id=execution_id, token=token)
+
+    def _receive_worker_task(self, command):
+        task_id = command.get('id') if isinstance(command, dict) else None
+        try:
+            task = validate_worker_task(
+                command, command.get('target_machine_id'), now=self.clock(),
+                local_actions=MAINTENANCE_ACTIONS)
+            record, created = self._local_task_store().begin(
+                task['id'], task['task_type'], task.get('project'), now=self.clock())
+        except Exception as exc:
+            if isinstance(task_id, str) and task_id:
+                self._report_worker_task(
+                    task_id, 'FAILED', fail_reason='%s: %s'
+                    % (type(exc).__name__, exc))
+            else:
+                print(json.dumps({'ok': False, 'code': 'WORKER_TASK_INVALID',
+                                  'message': '%s: %s'
+                                  % (type(exc).__name__, exc)}), flush=True)
+            return
+        if not created:
+            self._report_worker_task(
+                task['id'], record['state'], session_id=record.get('session_id'),
+                execution_id=record.get('execution_id'),
+                token=record.get('claim_token'), result=record.get('result'),
+                fail_reason=record.get('fail_reason'))
+            return
+        try:
+            thread = self.worker_task_thread_factory(
+                target=self._run_worker_task, args=(task,), daemon=True)
+            thread.start()
+        except Exception as exc:
+            reason = '%s: %s' % (type(exc).__name__, exc)
+            failed = self._local_task_store().update(
+                task['id'], 'FAILED', fail_reason=reason, now=self.clock())
+            self._report_worker_task(task['id'], 'FAILED', fail_reason=reason)
+            if failed is None:
+                print(json.dumps({'ok': False, 'code': 'WORKER_TASK_START_FAILED',
+                                  'task': task['id']}), flush=True)
+
+    def _run_worker_task(self, task):
+        run_store = self._local_task_store()
+        record = run_store.update(task['id'], 'RUNNING', now=self.clock())
+        if record is None:
+            return
+        self._report_worker_task(task['id'], 'RUNNING')
+        try:
+            executor = self.worker_task_executor or self._execute_worker_task_body
+            result = executor(task)
+            if not isinstance(result, dict):
+                raise ValueError('WORKER_TASK_RESULT_INVALID')
+            session_id = result.get('session_id')
+            execution_id = result.get('execution_id')
+            completed = run_store.update(
+                task['id'], 'SUCCEEDED', session_id=session_id,
+                execution_id=execution_id, result=result, now=self.clock())
+            if completed is not None:
+                self._report_worker_task(
+                    task['id'], 'SUCCEEDED', session_id=session_id,
+                    execution_id=execution_id, result=result)
+        except Exception as exc:
+            reason = '%s: %s' % (type(exc).__name__, exc)
+            execution_id = getattr(exc, 'execution_id', None)
+            token = getattr(exc, 'token', None)
+            failed = run_store.update(task['id'], 'FAILED',
+                                      execution_id=execution_id,
+                                      claim_token=token,
+                                      fail_reason=reason, now=self.clock())
+            if failed is not None:
+                self._report_worker_task(task['id'], 'FAILED',
+                                         execution_id=execution_id, token=token,
+                                         fail_reason=reason)
+
+    def _recover_worker_tasks(self):
+        """Reconcile local RUNNING records before accepting new commands.
+
+        A detached CLI may outlive a WorkerAgent restart. Keep its task fenced
+        while that PID is alive; after it exits, report the result as uncertain
+        rather than launching a duplicate session or replaying a maintenance
+        action whose side effect may already have happened.
+        """
+        if self._task_recovery_started:
+            return
+        self._task_recovery_started = True
+        try:
+            active = self._local_task_store().active_runs()
+        except Exception as exc:
+            print(json.dumps({'ok': False, 'code': 'WORKER_TASK_RECOVERY_FAILED',
+                              'message': '%s: %s' % (type(exc).__name__, exc)}),
+                  flush=True)
+            return
+        for record in active:
+            pid = record.get('runtime_pid')
+            if pid and self.pid_alive_fn(pid):
+                try:
+                    thread = self.worker_task_thread_factory(
+                        target=self._watch_recovered_worker_task,
+                        args=(record,), daemon=True)
+                    thread.start()
+                except Exception:
+                    self._fail_recovered_worker_task(record)
+            else:
+                self._fail_recovered_worker_task(record)
+
+    def _watch_recovered_worker_task(self, record):
+        while self.pid_alive_fn(record['runtime_pid']):
+            time.sleep(5.0)
+        self._fail_recovered_worker_task(record)
+
+    def _fail_recovered_worker_task(self, record):
+        reason = 'WORKER_RESTART_DURING_TASK: runtime outcome is uncertain; '
+        if record.get('runtime_pid'):
+            reason += 'runtime process exited after the WorkerAgent restarted'
+        else:
+            reason += 'no runtime process identity was recorded'
+        failed = self._local_task_store().update(
+            record['command_id'], 'FAILED',
+            execution_id=record.get('execution_id'),
+            claim_token=record.get('claim_token'), fail_reason=reason,
+            now=self.clock())
+        if failed is None:
+            return
+        if record.get('log_path'):
+            try:
+                Path(record['log_path']).with_suffix('.prompt').unlink()
+            except OSError:
+                pass
+        if record.get('worktree') and record.get('project'):
+            try:
+                row = self._task_registration(record['project'], require_handler=False)
+                cfg = self.cfg_factory(record['project'], row)
+                review_round.remove_worktree_quietly(
+                    cfg, record['worktree'], self.git_fn)
+            except Exception:
+                pass  # dirty worktrees remain for a human to inspect
+        self._report_worker_task(
+            record['command_id'], 'FAILED', session_id=record.get('session_id'),
+            execution_id=record.get('execution_id'), token=record.get('claim_token'),
+            fail_reason=reason)
+
+    def _execute_worker_task_body(self, task):
+        from .worker_task_executor import WorkerTaskExecutor
+        return WorkerTaskExecutor(self)(task)
+
     def _ack(self, project, command_id, outcome, fail_reason=None, execution=None,
              claim=None):
         """A failed command carries its claim (execution + token) when one was
@@ -352,7 +659,8 @@ class WorkerAgent(SpawnWatchMixin):
             projects = []
         import socket
         frame = {'type': 'hello', 'machine': socket.gethostname(),
-                 'registrations': sorted(projects)}
+                 'registrations': sorted(projects),
+                 'task_schema_versions': [1]}
         if self._capability is not None:
             # The last-known snapshot rides the hello: a reconnecting agent
             # projects immediately. A first-ever connect has none — the
@@ -492,6 +800,7 @@ class WorkerAgent(SpawnWatchMixin):
     def run(self, stop=None):
         """Connect, serve frames, reconnect with backoff. A dead channel never
         loses a command: it stays on the ledger until this agent is back."""
+        self._recover_worker_tasks()
         attempt = 0
         while stop is None or not stop.is_set():
             try:
@@ -531,6 +840,8 @@ class WorkerAgent(SpawnWatchMixin):
             raise ConnectionError('upgrade refused: %s' %
                                   head.split(b'\r\n', 1)[0].decode('ascii', 'replace'))
         self._verify_accept(head, client_key, sock)
+        self._channel_connected = True
+        self._connected_since = self.clock()
         try:
             sock.sendall(ws_proto.encode_client_text(
                 json.dumps(self.hello_frame(), ensure_ascii=False)))
@@ -571,6 +882,7 @@ class WorkerAgent(SpawnWatchMixin):
                     continue
                 self.execute(command)
         finally:
+            self._channel_connected = False
             caps_stop.set()
             try:
                 sock.close()

@@ -75,6 +75,7 @@ class ProgressFollowTests(unittest.TestCase):
 
     def test_hello_frame_lists_registered_projects(self):
         self.assertEqual('hello', self.agent.hello_frame()['type'])
+        self.assertEqual([1], self.agent.hello_frame()['task_schema_versions'])
         # nothing registered yet: an empty list, never a missing key
         self.assertEqual([], self.agent.hello_frame()['registrations'])
         self._register_row('a__b', str(self.root / 'repo'))

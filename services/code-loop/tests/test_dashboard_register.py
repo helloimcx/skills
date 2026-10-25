@@ -106,6 +106,19 @@ class RegisterTriggerTests(unittest.TestCase):
         self.assertEqual(0, code)
         self.assertIn('a__b', message)
 
+    def test_coordinator_runtime_can_be_registered_per_project(self):
+        code, _ = register_trigger(
+            self.db, 'a__b', repo=str(self.repo),
+            coordinator_agent='opencode', coordinator_model='provider/model')
+        self.assertEqual(0, code)
+        row = self.row()
+        self.assertEqual(('opencode', 'provider/model'),
+                         (row['coordinator_agent'], row['coordinator_model']))
+        code, message = register_trigger(
+            self.db, 'a__b', coordinator_agent='pi')
+        self.assertEqual(1, code)
+        self.assertIn('SUBAGENT_UNSUPPORTED', message)
+
 
 if __name__ == '__main__':
     unittest.main()

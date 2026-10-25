@@ -30,7 +30,8 @@ CACHE_TTL_SECONDS = 600.0
 
 __all__ = ['Runner', 'Registry', 'REGISTRY', 'CACHE_TTL_SECONDS', 'cards', 'detect_models',
            'ids', 'options', 'reset_cache', 'session_reader', 'spawn_argv',
-           'valid_model_id', 'validated']
+           'valid_model_id', 'validated', 'validate_coordinator',
+           'coordinator_argv']
 
 
 class Registry:
@@ -145,6 +146,27 @@ def validated(agent, model):
 
 def spawn_argv(agent, model=None, which_fn=None, run_fn=None):
     return REGISTRY.spawn_argv(agent, model, which_fn=which_fn, run_fn=run_fn)
+
+
+def validate_coordinator(agent, model=None):
+    """Validate a worker-local runtime selection for Coordinator use."""
+    agent, model = REGISTRY.validated(agent, model)
+    if agent is None:
+        raise ValueError('INVALID_COMMAND: coordinator agent is required')
+    runner = REGISTRY.get(agent)
+    if not runner.supports_subagents:
+        raise ValueError('SUBAGENT_UNSUPPORTED: %s cannot launch Handler child agents'
+                         % agent)
+    return agent, model
+
+
+def coordinator_argv(agent, model=None, task_type=None, which_fn=None, run_fn=None):
+    if agent is None:
+        raise ValueError('INVALID_COMMAND: coordinator agent is required')
+    validate_coordinator(agent, model)
+    runner = REGISTRY.get(agent)
+    return runner.coordinator_argv(model, task_type=task_type,
+                                   which_fn=which_fn, run_fn=run_fn)
 
 
 def session_reader(agent=None):
