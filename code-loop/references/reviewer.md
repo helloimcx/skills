@@ -68,7 +68,7 @@ python scripts/control_plane.py verify --execution <EXECUTION_ID> --token <TOKEN
 ```json
 {
   "verdict": "LGTM",
-  "summary": "全量单元测试通过，架构规范与覆盖率达标，准予自动合并。",
+  "summary": "依据下方实际验证结果填写，不预设测试或门禁通过。",
   "checks": {
     "verify_exam": "PASSED",
     "required_checks": "PASSED",

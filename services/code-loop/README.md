@@ -20,16 +20,17 @@ code-loop 的机器本地确定性运行时（服务单元）：Control Plane �
 
 ## 考题文件 `.code-loop/verify.json`（2026-09-17 起，考题唯一源）
 
-review 验证标准放在**各项目仓库**的这个文件里（仅两键；机器配置同名键降级为迁移回退）：
+review 验证标准放在**各项目仓库**的这个文件里：`verification` 是必需的完整验证命令，`verification_fast` 是可选的 Handler 快速层，`required_checks` 是可选的 CI 检查名单（缺省为空）。机器配置兼容迁移回退：
 
 ```json
 {
   "verification": [["{python}", "-m", "pytest", "tests/", "-q"]],
-  "required_checks": ["ci/build"]
+  "verification_fast": [["{python}", "-m", "pytest", "tests/test_issue_module.py", "-q"]],
+  "required_checks": ["CI Gate"]
 }
 ```
 
-- `verification` 是 argv 二维数组（`{python}`/`{worktree}` 占位）；`required_checks` 是放行前的 CI context 名单（首尾空白规范化）。未知键拒绝。
+- `verification` 是完整验证 argv 二维数组；可选 `verification_fast` 是非 Reviewer 轮的快速反馈层，主要供 Handler 使用。Reviewer 始终使用完整 `verification`；快速层缺省或为空时回退完整验证。`{python}`/`{worktree}` 是命令占位；`required_checks` 是放行前精确匹配的 GitHub Checks / Commit Status context 名单（首尾空白规范化）。未知键拒绝。
 - CP 按 sync 观测到的 base commit 读取——PR 分支改不了自己的考题；**改验证标准 = 对 base 分支的普通 PR**，合并后下一轮生效（在途轮 `STALE_INPUT` 重领新版）。仅 404（文件不存在）回退机器配置两键；坏文件或读取失败 fail-closed（`EXAM_INVALID`/`EXAM_UNAVAILABLE`/`EXAM_REF_INVALID`），sync 失败、claim 拒绝，绝不静默回退。
 - 护栏：PR diff 精确触碰该文件时，reviewer 判词评论（含 BLOCKED 的 PR 评论）由服务端追加固定警示行并记 `exam.touched_by_pr` 事件；files 查询失败则 publish 干净失败重试。
 - 迁移：把机器配置 `~/.code-loop/projects/<key>/control-plane.json` 的两键原样搬进仓库文件、走 PR 合并；合并后 `status.verification_source` 从 `machine` 变 `repo` 即生效。完整语义见 `skills/code-loop/references/control-plane.md`「考题」一节。
@@ -179,11 +180,12 @@ python services/code-loop/scripts/cp_server.py machines revoke --name dev-b    #
 ## 测试
 
 ```bash
-python3 -m unittest discover -s services/code-loop/tests -p 'test_*.py'  # 核心服务套件（fail-closed）
-python3 -m unittest discover -s tests -p 'test_*.py'                   # 仓库级集成与软链契约测试
-python3 code-loop/scripts/test_shims.py                               # 技能 shim 入口测试
-python3 services/code-loop/tests/test_cp_xxx.py                       # 单个测试直跑
+python3 services/code-loop/tests/test_control_plane_runtime.py         # 本地定向回归示例
+python3 -m unittest discover -s tests -p 'test_*.py'                   # 快速仓库契约；包含 skill shim 和其他分发契约
+python3 -m unittest discover -s services/code-loop/tests -p 'test_*.py' # 完整服务回归
 ```
+
+GitHub Actions 在每次 PR、推送 main 和手动触发时，使用 Python 3.9 与 3.13 并行运行仓库契约和完整服务回归；最终必须通过 `CI Gate`。本地开发通常先跑定向测试和仓库契约；高风险改动扩大验证范围。Reviewer 的完整考题与 CI 全量套件都保留。检查工作流本身不等于开启 GitHub 分支保护，目标项目需在工作流稳定通过后把确切 job 检查名加入 required checks。
 
 ### 测试分层映射
 

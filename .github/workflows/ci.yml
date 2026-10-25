@@ -1,0 +1,102 @@
+name: CI
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  repository-tests:
+    name: Repository tests (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.9', '3.13']
+    steps:
+      - name: Check out source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Set temporary Git identity
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Run repository contract tests
+        run: python -m unittest discover -s tests -p 'test_*.py'
+
+      - name: Compile Python source
+        run: >-
+          python -m compileall -q code-duplication-scanner code-loop d2
+          github-arch-analyzer project-setup prototype-first services/code-loop
+          tests vibe-coding
+
+  service-tests:
+    name: Service tests (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.9', '3.13']
+    steps:
+      - name: Check out source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Set temporary Git identity
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Run complete service test suite
+        run: python -m unittest discover -s services/code-loop/tests -p 'test_*.py'
+
+  ci-gate:
+    name: CI Gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    needs: [repository-tests, service-tests]
+    if: always()
+    steps:
+      - name: Check out source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.13'
+
+      - name: Require every test job to succeed
+        env:
+          REPOSITORY_TESTS_RESULT: ${{ needs.repository-tests.result }}
+          SERVICE_TESTS_RESULT: ${{ needs.service-tests.result }}
+        run: >-
+          python .github/scripts/ci_gate.py
+          --repository-result "$REPOSITORY_TESTS_RESULT"
+          --service-result "$SERVICE_TESTS_RESULT"
