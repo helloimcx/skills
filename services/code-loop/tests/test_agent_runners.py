@@ -85,6 +85,13 @@ class DetectModelsTests(unittest.TestCase):
         self.assertEqual(['opencode/big-pickle', 'kimi-for-coding/k3',
                           'opencode/mimo-v2.5-free', 'opencode/dup'], models)
 
+    def test_injected_runner_is_used_without_which_fn(self):
+        calls = []
+        models = opencode().models(
+            run_fn=run_fn_factory(stdout='opencode/big-pickle\n', calls=calls))
+        self.assertEqual(['opencode/big-pickle'], models)
+        self.assertEqual(1, len(calls))
+
     def test_nonzero_exit_means_no_models(self):
         self.assertEqual([], opencode().models(
             run_fn=run_fn_factory(stdout='x/y', rc=1), which_fn=which_stub))
