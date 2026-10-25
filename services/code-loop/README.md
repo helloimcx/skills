@@ -1,10 +1,10 @@
 # code-loop service
 
-code-loop 的机器本地确定性运行时（服务单元）：Control Plane 协调器（`cp/`）、监控面板（`dash/`，平台事实只读 + 三个白名单本机动作：采集刷新 / 决策回复 / 下发 reviewer 轮指令）、事件触发层（`trigger.py`）、**合并服务**（`cp_server.py serve`：单进程双端口——8722 协调面 + `127.0.0.1:8712` 面板 UI）、**指令通道**（`cp/ws.py` 最小 RFC6455 + `cp/server.py` 的派发器 + `agent.py` 常驻执行机 agent）与其全量测试。对应薄 skill 见 `code-loop/`（规则文档 + 路径稳定的委托 CLI：control_plane/dashboard/trigger/cp_server/worker_agent/operator/check_ledger）；集成背景与契约见 `docs/specs/2026-10-18-code-loop-service-and-skill-integration.md`。
+code-loop 的机器本地确定性运行时（服务单元）：Control Plane 协调器（`cp/`）、监控面板（`dash/`）、事件触发层（`trigger.py`）、**合并服务**（`cp_server.py serve`：单进程双端口——8722 协调面 + `127.0.0.1:8712` 面板 UI）、**机器任务通道**（`cp/ws.py`、`cp/worker_tasks.py`、常驻 `agent.py`、typed task executor 与本机 runtime runner）与其测试。对应薄 skill 见 `code-loop/`（规则文档 + 路径稳定的委托 CLI：control_plane/dashboard/trigger/cp_server/worker_agent/operator/check_ledger）；集成背景与契约见 `docs/specs/2026-10-18-code-loop-service-and-skill-integration.md`。
 
 ## 边界
 
-- 纯 Python 3.9+ 标准库 + 本地 SQLite。`cp_server.py serve` 是**用户手动拉起的 opt-in 局域网协调网关，同时承载面板 UI**（dashboard 已并入其 loopback listener：一个进程两个端口，UI 仍只绑 127.0.0.1）——不是系统服务；进程由**看门狗**（`watchdog.py`，本服务一部分）巡检自愈：按命令行定位 `cp_server.py` / `worker_agent.py` 真实进程，缺失即 `schtasks /run` 拉起并验证新进程，cp-server 另验 8712 HTTP 探活，每轮留痕 `~/.code-loop/logs/watchdog.jsonl`。建议注册为 schtasks 周期任务（每 5 分钟，`--check` 为只读巡检）；`dashboard.py serve` 退役为指向合并命令的提示入口（`collect`/`register` 子命令不变）。唯一新增常驻组件是执行机 **worker agent**（`worker_agent.py`）：只服务指令通道，掉线仅损失推送实时性（指令留台账、TTL 过期可见、断线自愈重连后补派——含合并服务重启场景），cron 轮与事件触发层不受影响。
+- 纯 Python 3.9+ 标准库 + 本地 SQLite。`cp_server.py serve` 是**用户手动拉起的 opt-in 局域网协调网关，同时承载面板 UI**（dashboard 已并入其 loopback listener：一个进程两个端口，UI 仍只绑 127.0.0.1）——不是系统服务；进程由**看门狗**（`watchdog.py`，本服务一部分）巡检自愈：按命令行定位 `cp_server.py` / `worker_agent.py` 真实进程，缺失即 `schtasks /run` 拉起并验证新进程，cp-server 另验 8712 HTTP 探活，每轮留痕 `~/.code-loop/logs/watchdog.jsonl`。建议注册为 schtasks 周期任务（每 5 分钟，`--check` 为只读巡检）；`dashboard.py serve` 退役为指向合并命令的提示入口（`collect`/`register` 子命令不变）。职责上，CP 侧 **Operator** 负责全局事件消费、授权路由和结果追踪；每台执行机的常驻 **WorkerAgent**（`worker_agent.py`）负责认证接入、task 校验、幂等和执行监督；每条机器任务临时启动本机 **Coordinator** runtime，需要时由它委派独立 Handler，runtime 不常驻。worker 掉线时 task 留在机器台账，重连后补派；cron 轮继续作为项目状态的正确性地板。
 - 依赖方向单向：skill → service。本服务不 import `skills/` 任何模块；规则文档、验证命令等均为机器本地配置注入的路径。
 - 机器本地状态全部在 `~/.code-loop/`（config、SQLite、锁、钉扎证书、凭据、dashboard.sqlite、`server/`），不入任何仓库。
 - 平台事实只有一条爬取路径（`cp/observer.py` + `~/.code-loop/observer.sqlite`）：CP server 的 driver 线程按 `observer_period`（默认 120s）刷新，CP 与 dashboard 都读同一份；CP/collector 仅在 store 缺失或过旧时内联爬取兜底（fail-open，语义不变）。
@@ -53,12 +53,16 @@ services/code-loop/
 │   │   ├── ws.py             # 最小 RFC6455 编解码（vendored，纯标准库；拒分片/二进制/超帧）
 │   │   ├── commands.py       # 指令台账 Service 面（入队/ack/修复 sweep 的配置化封装）
 │   │   ├── registry.py       # 机器注册表（machines/grants/一次性 enroll code；token 只存 sha256）
+│   │   ├── worker_tasks.py   # machine-scoped typed task 台账与可重放状态事件
 │   │   ├── server.py         # 数据面 HTTP app（路由白名单/Bearer/每请求 Service/worker 身份盖章）
 │   │   ├── client.py         # worker 传输（TLS 钉扎/Bearer/无自动重试）
 │   │   ├── observer.py       # 观察层：全系统唯一爬取路径（增量、原始 JSON 保真，CP/dashboard 共用同一个 store）
 │   │   └── worker.py         # WorkerService（本地执行 + 远程协调，与 Service 同方法面；claim_raw 带 ttl/item）
 │   ├── dash/                 # 面板后端（store facade + schema/ingest/verdicts/views/health 分层 + serve/collect/notify；前端源码见 frontend/）
-│   ├── agent.py              # worker agent：WS 常驻，收指令 → 本机执行预备链 → ack
+│   ├── agent.py              # WorkerAgent：WS 常驻，校验 typed task → 本机执行 → 状态回报
+│   ├── worker_task_protocol.py # task envelope/schema/action ID 严格校验
+│   ├── worker_task_store.py  # worker-local command idempotency journal
+│   ├── worker_task_executor.py # PR Handler 派发、诊断证据与固定维护 adapter
 │   ├── agent_watch.py        # agent 的 liveness 半边（SpawnWatchMixin：spawn 启动窗口 + 进程死亡守望，2026-09-23 自 agent.py 拆出控行数；方法经混入仍是 WorkerAgent 成员）
 │   ├── agent_runners/        # coding agent 插件注册表（base 接口 + claude/opencode/pi 插件）：身份白名单/模型探测/argv 预设/会话输出解析的唯一源（claude_transcript=claude JSONL，opencode_storage=opencode JSON 存储，pi_transcript=pi JSONL）
 │   ├── cli.py                # 叶子模块：CLI 命令解析（Windows .cmd 桥接），trigger 与插件共用，不 import 任何 codeloop 模块
@@ -77,6 +81,12 @@ services/code-loop/
 ├── prototypes/               # dashboard UI 原型（唯一设计源；硬规则见下）
 └── tests/                    # 全量单测（python 直跑 + 门禁 pytest 双通道，纳入仓库门禁）
 ```
+
+## Operator machine task 与本机 Coordinator
+
+CP sync 只对新观察到的 changes-requested review / merge conflict 写 `pr.handler_repair_needed` 事件；discover 停摆按阈值写 `worker.loop_stalled` 边沿事件。中心 Operator 用持久游标消费事件并写入 machine task ledger。Operator 负责全局派发；WorkerAgent 是机器上的常驻接收/监督入口；Coordinator 是每条任务临时启动的本机智能协调者。`pr.repair` 由获授权 worker 上的 WorkerAgent 预备现有 Handler claim/worktree/bind，再启动一次性 Coordinator runtime，由它通过原生 Task/subagent 能力委派独立 Handler 完成仓库改动。`worker.project_diagnose` 由 Coordinator 分析 CP、channel、项目注册、watchdog 和已登记 scheduler 证据；它只能返回 envelope 允许的 action ID，本机代码负责确定性校验、执行固定 adapter、post-check 与审计。
+
+Worker 的 `~/.code-loop/control-plane.json` 可设置 `coordinator_agent` / `coordinator_model` 作为机器默认，也可在 `projects.<org__repo>` 中覆盖；Dashboard 项目注册记录可覆盖 Coordinator runtime/model。`maintenance.scheduler_tasks.discover` 与 `maintenance.services.worker_agent` 是可选精确目标登记。当前固定 scheduler/service adapter 仅支持 Windows Task Scheduler / Windows service；其他平台会报告未知或拒绝相应动作，不会退化成 shell 命令。配置细节见 [Operator 契约](../../code-loop/references/operator.md#worker-coordinator-配置)。
 
 ## dashboard UI 原型机制（2026-09-17 引入，借鉴 ai_quality_analysis `design/`）
 

@@ -74,7 +74,9 @@ CREATE TABLE IF NOT EXISTS projects (
   repo_cwd TEXT,
   entry_doc TEXT,
   rules_doc TEXT,
-  spawn_command TEXT
+  spawn_command TEXT,
+  coordinator_agent TEXT,
+  coordinator_model TEXT
 );
 CREATE TABLE IF NOT EXISTS issues (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -308,7 +310,8 @@ def connect(path):
             pass  # a concurrent connect() added it first
     # …and before the manual review-trigger registration columns.
     columns = {row[1] for row in db.execute('PRAGMA table_info(projects)')}
-    for column in ('repo_cwd', 'entry_doc', 'rules_doc', 'spawn_command'):
+    for column in ('repo_cwd', 'entry_doc', 'rules_doc', 'spawn_command',
+                   'coordinator_agent', 'coordinator_model'):
         if column not in columns:
             try:
                 db.execute('ALTER TABLE projects ADD COLUMN %s TEXT' % column)

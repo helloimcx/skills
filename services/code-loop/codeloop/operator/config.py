@@ -11,16 +11,27 @@ DEFAULTS = {
     'model': None,
     'cooldown_minutes': 30,
     'max_rounds_per_day': 12,
+    'task_ttl_seconds': 7 * 86400,
     # Alert rules eligible for operator rounds. needs_human_aging is
     # deliberately absent: human decisions are never agent-consumed.
     'alert_rules': ('loop_stall', 'worker_stall', 'collect_stale',
                     'lease_expired', 'outbox_limbo', 'pr_blocked',
                     'machine_disabled'),
-    'event_kinds': ('sync.failed', 'command.abandon_failed'),
+    'event_kinds': ('sync.failed', 'command.abandon_failed',
+                    'pr.handler_repair_needed', 'worker.loop_stalled',
+                    'worker.loop_resolved', 'worker.task.succeeded',
+                    'worker.task.failed'),
+    # Actions diagnostic tasks may request from the worker-local deterministic
+    # maintenance allowlist. The worker independently intersects this list
+    # with its own registered actions before executing anything.
+    'maintenance_actions': ('discover.run_once', 'scheduler.start_registered',
+                            'scheduler.restart_registered',
+                            'service.start_if_missing'),
     # Watchdog revival records are ledger-only unless this is turned on.
     'watchdog_auto_spawn': False,
 }
 KNOWN = frozenset(DEFAULTS)
+MAINTENANCE_ACTIONS = frozenset(DEFAULTS['maintenance_actions'])
 
 
 def _validate_scalars(cfg):
@@ -30,12 +41,20 @@ def _validate_scalars(cfg):
         raise ValueError('operator.cooldown_minutes must be a positive number')
     if not isinstance(cfg['max_rounds_per_day'], int) or cfg['max_rounds_per_day'] <= 0:
         raise ValueError('operator.max_rounds_per_day must be a positive integer')
+    if (isinstance(cfg['task_ttl_seconds'], bool)
+            or not isinstance(cfg['task_ttl_seconds'], int)
+            or cfg['task_ttl_seconds'] <= 0):
+        raise ValueError('operator.task_ttl_seconds must be a positive integer')
 
 
 def _validate_lists(cfg):
-    for name in ('alert_rules', 'event_kinds'):
+    for name in ('alert_rules', 'event_kinds', 'maintenance_actions'):
         if not cfg[name] or not all(isinstance(x, str) and x for x in cfg[name]):
             raise ValueError('operator.%s must be non-empty strings' % name)
+    unknown = sorted(set(cfg['maintenance_actions']) - MAINTENANCE_ACTIONS)
+    if unknown:
+        raise ValueError('operator.maintenance_actions has unknown actions: %s'
+                         % ', '.join(unknown))
 
 
 def _validate_agent(cfg):
@@ -60,6 +79,7 @@ def load_operator_config(dashboard_config):
     cfg.update(section)
     cfg['alert_rules'] = tuple(cfg['alert_rules'])
     cfg['event_kinds'] = tuple(cfg['event_kinds'])
+    cfg['maintenance_actions'] = tuple(cfg['maintenance_actions'])
     _validate_scalars(cfg)
     _validate_lists(cfg)
     _validate_agent(cfg)

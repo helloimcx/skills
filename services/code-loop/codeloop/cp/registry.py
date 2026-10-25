@@ -14,6 +14,8 @@ import secrets
 import sqlite3
 import time
 
+from .worker_tasks import WorkerTaskLedger
+
 
 class RegistryError(Exception):
     """Operator-facing registry rejection (coded, e.g. ENROLL_CODE_USED)."""
@@ -65,6 +67,7 @@ class Registry:
             CREATE UNIQUE INDEX IF NOT EXISTS idx_grant_requests_one_pending
                 ON grant_requests(machine_id, org_repo) WHERE state='PENDING';
         ''')
+        self.worker_tasks = WorkerTaskLedger(self.db)
 
     def close(self):
         self.db.close()

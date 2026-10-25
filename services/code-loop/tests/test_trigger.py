@@ -421,6 +421,23 @@ class BuildRoundPromptTests(unittest.TestCase):
         self.assertIn('STALE_INPUT', out)
         self.assertIn('自动置 CANCELLED', out)
 
+    def test_handler_prompt_carries_review_and_conflict_task_reasons(self):
+        self._write(self.handler_doc)
+        review = trigger.build_round_prompt(
+            'handler', self.row, 7,
+            dict(self.claim, task='PR_REVIEW_FIX',
+                 repair_reasons=['changes_requested']))
+        self.assertIn('task=PR_REVIEW_FIX', review)
+        self.assertIn('repair_reasons=changes_requested', review)
+        self.assertIn('只处理评审指出的问题', review)
+        self.assertNotIn('解决冲突', review)
+
+        combined = trigger.build_round_prompt(
+            'handler', self.row, 7,
+            dict(self.claim, task='PR_REVIEW_FIX',
+                 repair_reasons=['changes_requested', 'merge_conflict']))
+        self.assertIn('先按评审意见修复，再合并', combined)
+
     def test_handler_entry_doc_is_a_soft_convention(self):
         self._write(self.handler_doc)
         self._write(self.handler_entry)

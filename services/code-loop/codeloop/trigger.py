@@ -198,8 +198,38 @@ def build_round_prompt(loop, row, number=None, round_claim=None):
         if not isinstance(value, str) or not value:
             raise ValueError('ROUND_CLAIM_INVALID: %s (%s)' % (field, reason))
         kwargs[field] = value
+    if loop == 'handler':
+        task = round_claim.get('task') or 'PR_CONFLICT_RESOLUTION'
+        reasons = round_claim.get('repair_reasons') or []
+        kwargs['task'] = task
+        kwargs['repair_reasons'] = ','.join(reasons) if reasons else task
+        kwargs['repair_instruction'] = _repair_instruction(task, reasons)
+        kwargs['uncertainty_instruction'] = _uncertainty_instruction(task, reasons)
     return (_round_bootstrap(rules_doc, entry_doc)
             + spec['prepared_suffix'].format(**kwargs))
+
+
+def _repair_instruction(task, reasons):
+    reasons = set(reasons or ())
+    if task == 'PR_REVIEW_FIX' and 'merge_conflict' in reasons:
+        return ('先按评审意见修复，再合并 origin/<基线分支> 并解决冲突；'
+                '保留双方意图，完成两类修复后验证。')
+    if task == 'PR_REVIEW_FIX':
+        return '按 PR 的 changes-requested 评审意见修复，只处理评审指出的问题并验证。'
+    if task == 'PR_CONFLICT_RESOLUTION':
+        return ('按《PR 冲突解决（兜底）》规则合并 origin/<基线分支>，'
+                '解决冲突并保留双方真实意图；'
+                '无法判断时按规则报告 BLOCKED。')
+    if task == 'PR_SYNC_BASE':
+        return ('把 origin/<基线分支> 合入 PR 分支，消除已确认的基线差异；'
+                '若出现冲突，按 Handler 冲突规则处理。')
+    return '按 Handler 规则处理当前 repair work item 的 task 和 repair_reasons。'
+
+
+def _uncertainty_instruction(task, reasons):
+    if task == 'PR_REVIEW_FIX' and 'merge_conflict' not in set(reasons or ()):
+        return '无法判断评审意见时按契约 report BLOCKED 并留痕评论，不自行扩展修复范围。'
+    return '判不了的冲突按契约 report BLOCKED 并留痕评论（禁止猜测），不硬造解决方案。'
 
 
 # The dashboard's manual conflict-repair trigger: same bargain as the prepared
@@ -214,12 +244,13 @@ def build_round_prompt(loop, row, number=None, round_claim=None):
 PREPARED_REPAIR_PROMPT_SUFFIX = (
     '\n本轮为看板手动定向修复（本节指令优先于规则文档的全量盘点/任务扫描流程；'
     '其他 loop 文档与本轮无关，不要读）：'
-    '目标只有工作项 repair:{number}（PR #{number} 的冲突解决）。'
+    '目标只有工作项 repair:{number}（PR #{number}，task={task}，'
+    'repair_reasons={repair_reasons}）。本轮要求：{repair_instruction}'
     '看板已代你完成领取、工作区准备与绑定：execution={execution}、token={token}、'
     'worktree={worktree}（分支 {branch}，已 bind）。'
     '1) 不要 claim、不要 bind、不要另建 worktree——先读 {rules_doc}'
-    '的《PR 冲突解决（兜底）》与《Worktree 隔离》《开发流程》各节，然后只处理这一个任务：'
-    'merge origin/<基线分支>，解决冲突并保留双方真实意图，提交到本地即可——'
+    '中与 task/reasons 对应的 Handler 修复规则，以及《Worktree 隔离》《开发流程》各节，'
+    '然后只处理这一个任务，修复后提交到本地即可——'
     'push 由 publish 完成（见第 2 步），不要手动推。'
     '唯一例外：任何 CP 操作报该执行失效（过期 / 被回收 / STALE_INPUT），'
     '回退常规流程：`claim --loop handler --item repair:{number}` 领取成功后自建 '
@@ -230,7 +261,7 @@ PREPARED_REPAIR_PROMPT_SUFFIX = (
     '推回原 PR 分支 {head_ref}；不要先手动 push 再 publish，避免双推）。'
     'report/publish 报 STALE_INPUT 属执行换代：直接结束本轮即可——'
     '执行由 CP 自动置 CANCELLED，下一轮重领新版，不重试。'
-    '判不了的冲突按契约 report BLOCKED 并留痕评论（禁止猜测），不硬造解决方案。')
+    '{uncertainty_instruction}')
 
 
 # Per-loop manual-round facts: which docs are the loop's own (registered vs
