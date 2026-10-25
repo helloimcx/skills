@@ -959,7 +959,8 @@ def _invoke_publish(service, verb, body):
     need('execution', 'token')
     if verb == 'publish/begin':
         return service.prepare_publish(body['execution'], body['token'],
-                                       context=body.get('context'))
+                                       context=body.get('context'),
+                                       action_index=body.get('action_index'))
     need('op')
     return service.complete_publish(body['execution'], body['token'], body['op'],
                                     pushed=body.get('pushed'))

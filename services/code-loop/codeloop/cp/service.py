@@ -790,12 +790,12 @@ class Service(CommandLedgerMixin):
             e, item, payload = self.execution(eid, token)  # fresh() 现通过
         gate = gate_mod.validate_report(self, e, item, payload, eid, result)
         action = result.get('action')
-        if action:
+        if action or result.get('actions'):
             self.authorize(item, payload, result)
         with self.store.transaction():
             self.store.guard(eid, token)
-            if self.store.db.execute("SELECT 1 FROM outbox WHERE execution_id=? AND state!='SENT'", (eid,)).fetchone():
-                raise ValueError('UNFINISHED_PUBLICATION: reconcile before replacing report')
+            if self.store.db.execute('SELECT 1 FROM outbox WHERE execution_id=?', (eid,)).fetchone():
+                raise ValueError('PUBLICATION_ALREADY_STARTED: report is frozen')
             self.store.db.execute('UPDATE executions SET result=? WHERE id=?', (dump(result), eid))
             self.store.event('execution.reported', {'execution_id': eid, 'decision': result['decision']})
             self.store._renew_locked(eid, self.cfg['lease_seconds'])
@@ -812,7 +812,7 @@ class Service(CommandLedgerMixin):
                 gates, payload.get('signature'), result['decision']))
         # D1: a report that requested no publication IS the round's last step —
         # the terminal state derives from the delivered facts, no finish ritual.
-        if not result.get('action') and self.store.derive_terminal(eid) is not None:
+        if not (result.get('action') or result.get('actions')) and self.store.derive_terminal(eid) is not None:
             return dict(result, execution_state='SUCCEEDED')
         return dict(result, execution_state='ACTIVE')
 
@@ -857,6 +857,10 @@ class Service(CommandLedgerMixin):
         return gate_mod.publish_gate(self, e, item, source, result, context)
 
     def publish(self, eid, token):
+        e, item, source = self.execution(eid, token, current=False)
+        result = json.loads(e['result']) if e['result'] else {}
+        if result.get('actions') is not None:
+            return self._publish_actions(eid, token, result)
         prepared = self.prepare_publish(eid, token)
         if prepared['receipt'] is not None:
             return prepared['receipt']
@@ -867,6 +871,21 @@ class Service(CommandLedgerMixin):
                 self.mark_publish_unknown(prepared['op'])
                 raise ValueError('PUBLICATION_UNKNOWN: query receipt before any retry') from None
         return self.complete_publish(eid, token, prepared['op'], pushed=True)
+
+    def _publish_actions(self, eid, token, result):
+        """Local carrier for a batch; remote workers use begin/commit per item."""
+        actions = result['actions']
+        if not isinstance(actions, list) or not 2 <= len(actions) <= 10:
+            raise ValueError('INVALID_ACTIONS')
+        receipts = []
+        for index in range(len(actions)):
+            prepared = self.prepare_publish(eid, token, action_index=index)
+            if prepared.get('receipt') is not None:
+                receipts.append(prepared['receipt'])
+            else:
+                receipts.append(self.complete_publish(eid, token, prepared['op'], pushed=True))
+        self.store.derive_terminal(eid)
+        return {'issues': receipts, 'execution_state': 'SUCCEEDED'}
 
     def _exam_guard(self, action, source, payload):
         """Exam guard (spec B5): stamp reviewer verdicts of PRs touching the
@@ -879,7 +898,7 @@ class Service(CommandLedgerMixin):
             payload['body'] += '\n' + exam.GUARD_NOTE
             self.store.event('exam.touched_by_pr', {'pr': source['pr']['number'], 'head': source['pr']['head']['sha']})
 
-    def prepare_publish(self, eid, token, context=None):
+    def prepare_publish(self, eid, token, context=None, action_index=None):
         """First half of publication: reconcile past attempts, gate, and record
         the outbox intent before any external effect. Returns the operation the
         worker must confirm via complete_publish (pushing first when required)."""
@@ -888,6 +907,9 @@ class Service(CommandLedgerMixin):
             raise ValueError('REPORT_REQUIRED')
         result = json.loads(e['result'])
         if not result.get('action'):
+            if result.get('actions') is not None:
+                return self._prepare_batch_action(eid, token, e, item, source,
+                                                  result, action_index, context)
             raise ValueError('NO_PUBLICATION_REQUESTED')
         op = version([eid, result], {})
         marker = '<!-- code-loop:' + op + ' -->'
@@ -959,6 +981,89 @@ class Service(CommandLedgerMixin):
                 'action': action, 'payload': p, 'target_branch': target,
                 'execution': {'worktree': e['worktree'], 'branch': e['branch'], 'head': e['head']}}
 
+    def _prepare_batch_action(self, eid, token, execution, item, source, result,
+                              action_index, context=None):
+        """Persist or reconcile one child Issue operation for publish/begin."""
+        actions = result['actions']
+        if item['kind'] != 'discover' or not isinstance(actions, list) or not 2 <= len(actions) <= 10:
+            raise ValueError('INVALID_ACTIONS')
+        if action_index is None:
+            action_index = 0
+        if (isinstance(action_index, bool) or not isinstance(action_index, int)
+                or action_index < 0 or action_index >= len(actions)):
+            raise ValueError('INVALID_ACTION_INDEX')
+        entry = actions[action_index]
+        if entry.get('action') != 'create_issue':
+            raise ValueError('BATCH_ACTION_FORBIDDEN')
+        op = version([eid, 'report-action', action_index], {})
+        marker = '<!-- code-loop:' + op + ' -->'
+        row = self.store.db.execute('SELECT * FROM outbox WHERE id=?', (op,)).fetchone()
+        if row is not None and row['state'] == 'SENT':
+            self.store.derive_terminal(eid)
+            return {'op': op, 'receipt': json.loads(row['receipt']), 'push_required': False,
+                    'batch_index': action_index, 'batch_count': len(actions)}
+        if row is not None:
+            # SENDING/UNKNOWN can only be resolved through the unique marker;
+            # a missing marker is not permission to repeat a POST.
+            receipt = self.platform.find(marker, 'create_issue', json.loads(row['payload']))
+            if receipt is None:
+                raise ValueError('PUBLICATION_UNKNOWN: no receipt; do not resend')
+            already_sent = False
+            with self.store.transaction():
+                current = self.store.db.execute(
+                    'SELECT state,receipt FROM outbox WHERE id=?', (op,)).fetchone()
+                if current and current['state'] == 'SENT':
+                    receipt = json.loads(current['receipt'])
+                    already_sent = True
+                    resources = None
+                else:
+                    self.store.guard(eid, token)
+                    self.store.db.execute(
+                        "UPDATE outbox SET state='SENT',receipt=? WHERE id=?",
+                        (dump(receipt), op))
+                    self.store.event('publication.sent', {'operation': op, 'action': 'create_issue'})
+                    self.store._renew_locked(eid, self.cfg['lease_seconds'])
+                    resources = self.store.finalize_locked(eid)
+            self._release_after_finalize(eid, token, resources)
+            if already_sent:
+                receipt = json.loads(self.store.db.execute(
+                    'SELECT receipt FROM outbox WHERE id=?', (op,)).fetchone()['receipt'])
+            return {'op': op, 'receipt': receipt, 'push_required': False,
+                    'batch_index': action_index, 'batch_count': len(actions)}
+
+        # A new remote write requires the same fresh-snapshot guard as the
+        # scalar publication path. Existing outbox rows above are reconciled
+        # first so a stale snapshot cannot prevent recovery of a known effect.
+        self.sync()
+        execution, item, source = self.execution(eid, token)
+        current_result = json.loads(execution['result'])
+        if dump(current_result) != dump(result):
+            raise ValueError('REPORT_CHANGED: retry with the current report')
+        self.gate(execution, item, source, result, context)
+        payload = dict(entry['payload'])
+        payload['body'] = (
+            '> 🤖 本条由 code-loop **discover** 循环自动生成\n\n'
+            + payload['body'] + '\n\n' + marker
+            + '\n<!-- code-loop-agent: discover -->')
+        validator = getattr(self.platform, 'validate_action', None)
+        if validator is not None:
+            validator('create_issue', payload)
+        with self.store.transaction():
+            self.store.guard(eid, token)
+            current = self.store.db.execute(
+                'SELECT result FROM executions WHERE id=?', (eid,)).fetchone()
+            if not current or dump(json.loads(current['result'] or '{}')) != dump(result):
+                raise ValueError('REPORT_CHANGED: retry with the current report')
+            if self.store.db.execute('SELECT 1 FROM outbox WHERE id=?', (op,)).fetchone():
+                raise ValueError('PUBLICATION_IN_PROGRESS: retry to reconcile')
+            self.store.db.execute(
+                'INSERT INTO outbox VALUES (?,?,?,?,?,NULL)',
+                (op, eid, 'create_issue', dump(payload), 'SENDING'))
+            self.store._renew_locked(eid, self.cfg['lease_seconds'])
+        return {'op': op, 'receipt': None, 'push_required': False,
+                'action': 'create_issue', 'payload': payload,
+                'batch_index': action_index, 'batch_count': len(actions)}
+
     def complete_publish(self, eid, token, op, pushed=None):
         """Second half of publication: the recorded intent is now executed once
         against the platform, or resolved through marker queries only. A SENT
@@ -993,18 +1098,29 @@ class Service(CommandLedgerMixin):
             self.mark_publish_unknown(op)
             raise ValueError('PUBLICATION_UNKNOWN: query receipt before any retry') from None
         try:
+            already_sent = False
             with self.store.transaction():
-                self.store.guard(eid, token)
-                self.store.db.execute("UPDATE outbox SET state='SENT',receipt=? WHERE id=?", (dump(receipt), op))
-                self.store.event('publication.sent', {'operation': op, 'action': row['action']})
-                self.store._renew_locked(eid, self.cfg['lease_seconds'])
-                resources = self.store.finalize_locked(eid)
+                current = self.store.db.execute('SELECT state,receipt FROM outbox WHERE id=?', (op,)).fetchone()
+                if current and current['state'] == 'SENT':
+                    # A concurrent reconciler may have committed the same
+                    # marker while this sender was receiving its HTTP response.
+                    receipt = json.loads(current['receipt'])
+                    already_sent = True
+                    resources = None
+                else:
+                    self.store.guard(eid, token)
+                    self.store.db.execute("UPDATE outbox SET state='SENT',receipt=? WHERE id=?", (dump(receipt), op))
+                    self.store.event('publication.sent', {'operation': op, 'action': row['action']})
+                    self.store._renew_locked(eid, self.cfg['lease_seconds'])
+                    resources = self.store.finalize_locked(eid)
         except ValueError:
             # The write landed but the lease was stolen before the commit: the
             # outcome is ambiguous, exactly like a lost response — never
             # resend, resolve through the operator's receipt query.
             self.mark_publish_unknown(op)
             raise ValueError('PUBLICATION_UNKNOWN: query receipt before any retry') from None
+        if already_sent:
+            return receipt
         self._release_after_finalize(eid, token, resources)
         return receipt
 

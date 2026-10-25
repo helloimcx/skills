@@ -620,7 +620,23 @@ class Store(CommandStore):
             result = json.loads(row['result'])
             if not isinstance(result, dict):
                 raise ValueError('not a mapping')
-            if result.get('action') and not self.db.execute(
+            if result.get('actions') is not None:
+                actions = result['actions']
+                if not isinstance(actions, list):
+                    return None
+                # An empty list is the normal no-publication report shape
+                # used by operator rounds. Non-empty actions are the Discover
+                # batch protocol and require every child outbox to be SENT.
+                for index, action in enumerate(actions):
+                    if (not isinstance(action, dict)
+                            or action.get('action') != 'create_issue'):
+                        return None
+                    operation = version([execution, 'report-action', index], {})
+                    if not self.db.execute(
+                            "SELECT 1 FROM outbox WHERE id=? AND state='SENT'",
+                            (operation,)).fetchone():
+                        return None
+            elif result.get('action') and not self.db.execute(
                     "SELECT 1 FROM outbox WHERE id=? AND state='SENT'",
                     (version([execution, result], {}),)).fetchone():
                 return None
