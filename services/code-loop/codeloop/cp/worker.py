@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from urllib.parse import urlencode
 
 from .client import Client
 from .runtime import git, resolve_verification, run_checks, run_gate_commands, validate_worktree
@@ -113,6 +114,28 @@ class WorkerService:
         query = '?kind=' + kind if kind else ''
         return self.client.call('GET', self.client.endpoint('list') + query)['items']
 
+    def executions(self, loop=None):
+        query = '?loop=' + loop if loop else ''
+        result = self.client.call('GET', self.client.endpoint('executions') + query)
+        return result.get('executions', [])
+
+    def recent_executions(self, loop=None, limit=20):
+        query = '?include_terminal=1&limit=%d' % limit
+        if loop:
+            query += '&loop=' + loop
+        result = self.client.call('GET', self.client.endpoint('executions') + query)
+        return result.get('executions', [])
+
+    def execution_status(self, execution):
+        query = urlencode({'execution_id': execution})
+        result = self.client.call(
+            'GET', self.client.endpoint('executions') + '?' + query)
+        return result.get('execution')
+
+    def abandon(self, execution, token):
+        return self.client.call('POST', self.client.endpoint('abandon'),
+                                {'execution': execution, 'token': token})
+
     # -- local execution + remote bookkeeping --------------------------------
     def bind(self, eid, token, worktree, branch=None):
         root = self.cfg.get('repo_root')
@@ -180,6 +203,23 @@ class WorkerService:
             context = validate_worktree(self.cfg, bound['worktree'], bound.get('branch'))
         prepared = self.client.call('POST', self.client.endpoint('publish/begin'),
                                     {'execution': eid, 'token': token, 'context': context})
+        if prepared.get('batch_count') is not None:
+            count = prepared['batch_count']
+            receipts = []
+            for index in range(count):
+                current = prepared if index == 0 else self.client.call(
+                    'POST', self.client.endpoint('publish/begin'),
+                    {'execution': eid, 'token': token, 'context': context,
+                     'action_index': index})
+                if current.get('receipt') is not None:
+                    receipts.append(current['receipt'])
+                    continue
+                if current.get('push_required'):
+                    raise ValueError('BATCH_PUSH_NOT_SUPPORTED')
+                receipts.append(self.client.call(
+                    'POST', self.client.endpoint('publish/commit'),
+                    {'execution': eid, 'token': token, 'op': current['op']}))
+            return {'issues': receipts, 'execution_state': 'SUCCEEDED'}
         if prepared.get('receipt') is not None:
             return prepared['receipt']
         if prepared.get('push_required'):

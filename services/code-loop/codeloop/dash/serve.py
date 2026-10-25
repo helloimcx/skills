@@ -14,6 +14,7 @@ injectable for deterministic tests. The listener is loopback-only; all POST
 routes require the custom X-Requested-With header so a random cross-origin
 page cannot trigger them.
 """
+from contextlib import contextmanager
 import gzip
 import json
 import sys
@@ -257,8 +258,11 @@ def operator_ledger(db, query=None):
 def create(db, config=None, now=None, on_collect=None, on_reply=None,
            on_review_trigger=None, on_command_status=None, on_preflight=None,
            on_spawn_options=None, on_repair_trigger=None, on_repair_status=None,
-           on_operator_trigger=None, on_operator_options=None):
-    """Bind a handler class to an open store connection. `on_collect` (optional)
+           on_operator_trigger=None, on_operator_options=None, db_factory=None):
+    """Bind a handler class to dashboard reads. With ``db_factory``, each read
+    operation owns a connection, including background snapshot recomputes.
+    Otherwise the caller-owned ``db`` is locked for the whole read; callers
+    must not concurrently use it outside this handler. ``on_collect`` (optional)
     powers POST /api/collect — a local read-from-platform refresh, never a
     platform write. `on_reply` (optional) powers POST /api/reply — the
     dashboard's single platform write (comment_issue), which also records the
@@ -292,6 +296,26 @@ def create(db, config=None, now=None, on_collect=None, on_reply=None,
                                                'operator trigger not wired on this server')}
     status_paths = {'/api/review/trigger/status': on_command_status,
                     '/api/repair/trigger/status': on_repair_status}
+
+    db_lock = threading.RLock()
+
+    @contextmanager
+    def database():
+        if db_factory is None:
+            with db_lock:
+                yield db
+        else:
+            source = db_factory()
+            try:
+                yield source
+            finally:
+                source.close()
+
+    def read_route(path, query):
+        # route() fully materializes rows before its connection can be closed
+        # or handed to another thread. Network writes and callbacks stay out.
+        with database() as source:
+            return route(source, path, query, config, now)
 
     cache = {}          # key -> (content_type, status, body, fetched_at)
     cache_lock = threading.Lock()
@@ -349,7 +373,7 @@ def create(db, config=None, now=None, on_collect=None, on_reply=None,
         try:
             url = urlparse(key)
             query = {k: v[0] for k, v in parse_qs(url.query).items()}
-            content_type, status, payload = route(db, url.path, query, config, now)
+            content_type, status, payload = read_route(url.path, query)
             if status == 200:
                 body = payload if isinstance(payload, bytes) else json.dumps(
                     payload, ensure_ascii=False, default=str).encode('utf-8')
@@ -434,13 +458,15 @@ def create(db, config=None, now=None, on_collect=None, on_reply=None,
                 if not isinstance(project, str) or type(number) is not int or number <= 0:
                     self._send_json(400, {'error': 'project and positive number required'})
                     return
-                row = db.execute('SELECT id FROM projects WHERE org_repo=?',
-                                 (project,)).fetchone()
+                with database() as source:
+                    row = source.execute('SELECT id FROM projects WHERE org_repo=?',
+                                         (project,)).fetchone()
+                    issue = (source.execute(
+                        'SELECT state FROM issues WHERE project_id=? AND number=?',
+                        (row['id'], number)).fetchone() if row is not None else None)
                 if row is None:
                     self._send_json(404, {'error': 'unknown project'})
                     return
-                issue = db.execute('SELECT state FROM issues WHERE project_id=? AND number=?',
-                                   (row['id'], number)).fetchone()
                 if issue is None or issue['state'] != 'open':
                     self._send_json(409, {'error': 'issue not open'})
                     return
@@ -524,9 +550,12 @@ def create(db, config=None, now=None, on_collect=None, on_reply=None,
                 return
             params = parse_qs(url.query)
             only = params.get('project', [None])[0]
-            if only and not _known_project(db, only):
-                self._send_json(404, {'error': 'unknown project'})
-                return
+            if only:
+                with database() as source:
+                    known = _known_project(source, only)
+                if not known:
+                    self._send_json(404, {'error': 'unknown project'})
+                    return
             self._send_json(200, start_collect(only))
 
         def do_GET(self):
@@ -612,7 +641,7 @@ def create(db, config=None, now=None, on_collect=None, on_reply=None,
                     self._send_json(500, {'error': 'operator options failed: %s' % exc})
                 return
             try:
-                content_type, status, payload = route(db, url.path, query, config, now)
+                content_type, status, payload = read_route(url.path, query)
             except (ValueError, KeyError) as exc:
                 content_type, status = 'application/json', 400
                 payload = {'error': str(exc)}

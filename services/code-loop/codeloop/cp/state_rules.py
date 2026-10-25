@@ -474,6 +474,17 @@ DOCUMENTED_CODES = {
     'PR_STATE_UNKNOWN_OR_CONFLICT': 'head 漂移或 mergeable 未知/冲突 ⇒ 拒发（不基于摇晃事实发布）',
     'APPROVE_REQUIRED': 'handler 带 action 的发布判定必须是 APPROVE',
     'CONFIRMED_REQUIRED': 'discover 带 action 的判定必须是 CONFIRMED',
+    'ACTION_FIELDS_MUTUALLY_EXCLUSIVE': '单动作 action/payload 与批量 actions 不能混用',
+    'BATCH_ACTION_FORBIDDEN': '批量发布只允许 create_issue',
+    'BATCH_PAYLOAD_TOO_LARGE': '批量发布总载荷限制大小，避免超出报告存储边界',
+    'DUPLICATE_BATCH_ISSUE': '同一批次不能发布重复标题/正文的 Issue',
+    'INVALID_ACTIONS': '批量 actions 必须是 2 至 10 项的列表',
+    'INVALID_ACTION_ENTRY': '批量动作项必须只含 action/payload 且形状有效',
+    'INVALID_ACTION_INDEX': 'Worker 只能请求当前报告中存在的批量动作索引',
+    'INVALID_ISSUE_BODY_LENGTH': 'Issue 正文必须在平台允许长度内',
+    'INVALID_ISSUE_TITLE_LENGTH': 'Issue 标题必须在平台允许长度内',
+    'PUBLICATION_ALREADY_STARTED': '首次发布意图写入后冻结报告，避免更换已发布内容',
+    'REPORT_CHANGED': '发布前报告必须与签发意图时的报告完全一致',
     'REVIEW_COMMENT_REQUIRED': 'PR 首评（无既有判词评论）必须走 review_comment 动作',
     'GATE_REPAIR_PROOF_REQUIRED': 'GATE_REPAIR 判 RESOLVED 须有绿色验证证据',
     'INDEPENDENT_POST_MERGE_REVIEW_REQUIRED': 'POST_MERGE 关闭须独立判断证据（经 _require_independent_judgment 再抛）',
@@ -485,6 +496,10 @@ DOCUMENTED_CODES = {
     'PUBLICATION_IN_PROGRESS': '意图行竞态出现 ⇒ 重试走对账（不双发）',
     'PUSH_CONTEXT_CHANGED': 'push 前 worktree/branch/head 必须与绑定一致（防漂移推错）',
     'COMMAND_STATE': 'WS 派发面对 CAS 失败的服务层包装（指令非 CLAIMED 由该机器持有）',
+    'EVENT_CURSOR_INVALID': '事件回放游标必须是非负整数',
+    'EVENT_LIMIT_INVALID': '事件回放分页数量必须在允许范围内',
+    'EVENT_SOURCE_INVALID': '事件 source ID 必须是非空字符串',
+    'WORKER_STALL_THRESHOLD_INVALID': 'worker 停摆阈值必须是正数',
 }
 
 # 非理由码的机器可读字面量（补充扫描面捞到的任务/判定/fail_reason 值）——

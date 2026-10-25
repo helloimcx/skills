@@ -611,7 +611,7 @@ def kanban(db, org_repo=None, now=None):
             if (pid, pr['number']) in reviewing_by_pr:
                 continue  # under active review: the execution card owns the slot
             detail = latest_verdict_detail(db, pid, pr['number'],
-                                           cp_verdicts=verdicts)
+                                           cp_verdicts=verdicts[pid])
             verdict = detail['verdict'] if detail else None
             scope, scope_note = _review_scope(pr, cp_base)
             card = dict(pr, card='pr', org_repo=project['org_repo'], verdict=verdict,

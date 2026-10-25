@@ -7,6 +7,7 @@ Spawn argv binds the NATIVE executable, never an npm .cmd shim: the shim
 bridges through cmd.exe, and ``cmd /c batch`` dies silently (exit 1, zero
 output) under the DETACHED_PROCESS flag every spawn uses."""
 import os
+import json
 import subprocess
 import tempfile
 import unittest
@@ -350,6 +351,37 @@ class RegistryRegistrationTests(unittest.TestCase):
 
     def test_insertion_order_is_the_card_order(self):
         self.assertEqual(('claude', 'opencode', 'pi'), agent_runners.ids())
+
+    def test_coordinator_validation_requires_native_subagent_support(self):
+        self.assertEqual(('opencode', None),
+                         agent_runners.validate_coordinator('opencode', None))
+        self.assertEqual(('claude', None),
+                         agent_runners.validate_coordinator('claude', None))
+        with self.assertRaisesRegex(ValueError, 'SUBAGENT_UNSUPPORTED'):
+            agent_runners.validate_coordinator('pi', None)
+
+    def test_opencode_coordinator_profiles_scope_tools_per_task(self):
+        runner = opencode()
+        self.assertEqual(['--standalone', '--agent', 'code-loop-coordinator'],
+                         runner.coordinator_flags('pr.repair'))
+        repair = json.loads(runner.coordinator_environment('pr.repair')[
+            'OPENCODE_CONFIG_CONTENT'])['agent']['code-loop-coordinator']
+        self.assertEqual({'*': 'deny', 'task': 'allow'}, repair['permission'])
+        repair_v2 = json.loads(runner.coordinator_environment('pr.repair')[
+            'OPENCODE_CONFIG_CONTENT'])['agents']['code-loop-coordinator']
+        self.assertEqual('subagent', repair_v2['permissions'][-1]['action'])
+        self.assertEqual('allow', repair_v2['permissions'][-1]['effect'])
+        self.assertEqual(['--standalone', '--agent', 'code-loop-diagnose'],
+                         runner.coordinator_flags('worker.project_diagnose'))
+        diagnose = json.loads(runner.coordinator_environment(
+            'worker.project_diagnose')['OPENCODE_CONFIG_CONTENT'])
+        self.assertEqual({'*': 'deny'},
+                         diagnose['agent']['code-loop-diagnose']['permission'])
+
+    def test_claude_repair_stream_exposes_native_task_tool_calls(self):
+        claude = agent_runners.REGISTRY.get('claude')
+        self.assertEqual(['--tools', 'Task', '--output-format', 'stream-json',
+                          '--verbose'], claude.coordinator_flags('pr.repair'))
 
 
 class PluginContractTests(unittest.TestCase):

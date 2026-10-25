@@ -13,6 +13,8 @@ session is spent.
 """
 from __future__ import annotations
 
+import json
+import os
 import shutil
 
 from . import base, opencode_storage
@@ -44,6 +46,43 @@ class OpenCodeRunner(base.Runner):
     sub = '开源 agent'
     binary = 'opencode'
     models_command = [binary, 'models']
+    supports_subagents = True
+
+    def coordinator_flags(self, task_type=None):
+        # These named profiles are supplied through OPENCODE_CONFIG_CONTENT
+        # for this process only. The default shared OpenCode service is avoided
+        # by --standalone, so no task inherits another session's permissions.
+        if task_type == 'pr.repair':
+            return ['--standalone', '--agent', 'code-loop-coordinator']
+        if task_type == 'worker.project_diagnose':
+            return ['--standalone', '--agent', 'code-loop-diagnose']
+        raise ValueError('TASK_TYPE_UNKNOWN: %s' % task_type)
+
+    def coordinator_environment(self, task_type=None):
+        names = {'pr.repair': 'code-loop-coordinator',
+                 'worker.project_diagnose': 'code-loop-diagnose'}
+        name = names.get(task_type)
+        if name is None:
+            raise ValueError('TASK_TYPE_UNKNOWN: %s' % task_type)
+        description = ('Delegate one prepared PR repair to a Handler subagent'
+                       if task_type == 'pr.repair' else
+                       'Analyze supplied worker evidence without tools')
+        v1_permission = {'*': 'deny'}
+        v2_permissions = [{'action': '*', 'resource': '*', 'effect': 'deny'}]
+        if task_type == 'pr.repair':
+            # v1 calls the native child-session tool `task`; v2 calls it
+            # `subagent`. The other schema branch is ignored by that version.
+            v1_permission['task'] = 'allow'
+            v2_permissions.append({'action': 'subagent', 'resource': '*',
+                                   'effect': 'allow'})
+        profile = {'mode': 'primary', 'description': description,
+                   'permission': v1_permission,
+                   'permissions': v2_permissions}
+        env = os.environ.copy()
+        env['OPENCODE_CONFIG_CONTENT'] = json.dumps(
+            {'agent': {name: profile}, 'agents': {name: profile}},
+            ensure_ascii=False, separators=(',', ':'))
+        return env
 
     def argv(self, model=None, which_fn=None, run_fn=None):
         resolved = which_fn or shutil.which

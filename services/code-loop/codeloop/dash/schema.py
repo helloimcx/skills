@@ -8,6 +8,7 @@ import json
 import re
 import sqlite3
 from datetime import datetime, timezone
+from pathlib import Path
 
 
 # The four reviewer verdict strings from code-loop reviewer protocol.
@@ -73,7 +74,9 @@ CREATE TABLE IF NOT EXISTS projects (
   repo_cwd TEXT,
   entry_doc TEXT,
   rules_doc TEXT,
-  spawn_command TEXT
+  spawn_command TEXT,
+  coordinator_agent TEXT,
+  coordinator_model TEXT
 );
 CREATE TABLE IF NOT EXISTS issues (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -272,8 +275,10 @@ CREATE TABLE IF NOT EXISTS operator_runs (
 
 
 def connect(path):
-    # check_same_thread=False: the HTTP facade serves from worker threads;
-    # CPython's sqlite3 is serialized (threadsafety=3), so sharing is safe.
+    # check_same_thread=False permits sequential handoff to a consumer thread;
+    # callers must prevent overlapping use. SQLite builds with THREADSAFE=2
+    # do not serialize a shared connection (as on Apple's system Python).
+    # Production HTTP reads use separate connect_readonly() connections.
     # timeout=15: the busy-handler window for writer-writer contention — a
     # locked store must slow a collector down, never crash it (2026-09-14
     # starvation: 1222 "database is locked" crashes silently starved the
@@ -305,12 +310,25 @@ def connect(path):
             pass  # a concurrent connect() added it first
     # …and before the manual review-trigger registration columns.
     columns = {row[1] for row in db.execute('PRAGMA table_info(projects)')}
-    for column in ('repo_cwd', 'entry_doc', 'rules_doc', 'spawn_command'):
+    for column in ('repo_cwd', 'entry_doc', 'rules_doc', 'spawn_command',
+                   'coordinator_agent', 'coordinator_model'):
         if column not in columns:
             try:
                 db.execute('ALTER TABLE projects ADD COLUMN %s TEXT' % column)
             except sqlite3.OperationalError:
                 pass  # a concurrent connect() added it first
+    return db
+
+
+def connect_readonly(path):
+    """Open an existing dashboard for one read operation on its owning thread.
+
+    URI encoding preserves paths containing #, ? or %. No schema or journal
+    initialization runs here; the listener initializes the database once.
+    """
+    db = sqlite3.connect(Path(path).expanduser().resolve().as_uri() + '?mode=ro',
+                         uri=True, timeout=15.0, isolation_level=None)
+    db.row_factory = sqlite3.Row
     return db
 
 

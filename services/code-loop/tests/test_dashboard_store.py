@@ -806,6 +806,17 @@ class TriggerRegistrationTests(StoreTestCase):
         self.assertEqual('D:/r.md', row['rules_doc'])
         self.assertEqual(['claude', '-p'], json.loads(row['spawn_command']))
 
+    def test_coordinator_runtime_registration_requires_subagent_capability(self):
+        store.set_project_trigger(self.db, 'a__b',
+                                  coordinator_agent='opencode',
+                                  coordinator_model='provider/model')
+        row = self.db.execute('SELECT * FROM projects WHERE org_repo=?',
+                              ('a__b',)).fetchone()
+        self.assertEqual(('opencode', 'provider/model'),
+                         (row['coordinator_agent'], row['coordinator_model']))
+        with self.assertRaisesRegex(ValueError, 'SUBAGENT_UNSUPPORTED'):
+            store.set_project_trigger(self.db, 'a__b', coordinator_agent='pi')
+
     def test_register_edits_only_provided_keys(self):
         store.set_project_trigger(self.db, 'a__b', repo_cwd='D:/proj',
                                   entry_doc='D:/proj/e.md')
@@ -855,7 +866,8 @@ class TriggerRegistrationTests(StoreTestCase):
         db = store.connect(legacy)
         try:
             row = db.execute('SELECT * FROM projects').fetchone()
-            for column in ('repo_cwd', 'entry_doc', 'rules_doc', 'spawn_command'):
+            for column in ('repo_cwd', 'entry_doc', 'rules_doc', 'spawn_command',
+                           'coordinator_agent', 'coordinator_model'):
                 self.assertIn(column, row.keys())
             self.assertEqual('old__p', row['org_repo'])
             store.set_project_trigger(db, 'old__p', repo_cwd='D:/x')
