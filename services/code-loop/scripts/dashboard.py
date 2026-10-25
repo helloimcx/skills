@@ -220,12 +220,15 @@ def main(argv=None):
                         if op_store is not None:
                             op_store.db.close()
                         db.close()
-                    try:
-                        result['precompute'] = serving.precompute(args.db)
-                    except Exception as exc:
-                        # The read model is disposable. Collection/notification
-                        # remain successful and HTTP falls back to live reads.
-                        result['precompute'] = {'error': str(exc)}
+                    if args.db == ':memory:':
+                        result['precompute'] = {'skipped': 'in-memory database'}
+                    else:
+                        try:
+                            result['precompute'] = serving.precompute(args.db)
+                        except Exception as exc:
+                            # The read model is disposable. Collection/notification
+                            # remain successful and HTTP falls back to live reads.
+                            result['precompute'] = {'error': str(exc)}
                     code = 1 if summary['failed'] else 0
                 finally:
                     lock.close()

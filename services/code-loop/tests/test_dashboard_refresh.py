@@ -20,6 +20,18 @@ from codeloop.dash.collect_lock import DatabaseRoundLock
 
 
 class CollectLockTests(unittest.TestCase):
+    def test_memory_database_lock_does_not_create_a_worktree_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            previous = Path.cwd()
+            os.chdir(tmp)
+            try:
+                lock = DatabaseRoundLock(':memory:')
+                self.assertTrue(lock.acquire())
+                lock.close()
+                self.assertFalse(Path(tmp, ':memory:.collect.lock').exists())
+            finally:
+                os.chdir(previous)
+
     def test_lock_is_per_database_and_owner_exit_releases_it(self):
         with tempfile.TemporaryDirectory() as tmp:
             first_db = Path(tmp) / 'one.sqlite'

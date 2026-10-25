@@ -9,11 +9,20 @@ from pathlib import Path
 
 class DatabaseRoundLock:
     def __init__(self, db_path):
-        self.path = Path(db_path).expanduser().resolve().with_suffix(
-            Path(db_path).suffix + '.collect.lock')
+        db_path = os.fspath(db_path)
+        # SQLite's in-memory database has no stable filesystem identity, so
+        # it cannot share a per-database process lock. In particular, resolving
+        # this DSN as a path creates a persistent ``:memory:.collect.lock`` in
+        # the caller's working tree and breaks clean-worktree verification.
+        self.path = (
+            None if db_path == ':memory:' else
+            Path(db_path).expanduser().resolve().with_suffix(
+                Path(db_path).suffix + '.collect.lock'))
         self._fd = None
 
     def acquire(self):
+        if self.path is None:
+            return True
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._fd = os.open(str(self.path), os.O_CREAT | os.O_RDWR, 0o600)
         try:
