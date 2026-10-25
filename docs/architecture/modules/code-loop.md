@@ -4,7 +4,7 @@
 
 `services/code-loop` is an independently runnable Python 3.9+ standard-library service. `scripts/cp_server.py serve` mounts the Control Plane listener and a loopback dashboard in one process. The thin `code-loop` skill delegates CLI operations to this service. Machine-local configuration, credentials and SQLite files live outside the repository.
 
-The Control Plane owns project coordination, project and machine task ledgers, leases and platform publication. The dashboard derives views from collected facts; action callbacks own collection, replies and command dispatch. `cp.observer` supplies the shared platform snapshot store. The dashboard collector maintains incremental runtime mirrors and a disposable persistent serving model; neither becomes an authority for Control Plane state.
+The Control Plane owns project coordination, project command ledgers, project and machine task ledgers, leases and platform publication. The dashboard derives views from collected facts; action callbacks own collection, replies and command dispatch. `cp.observer` supplies the shared platform snapshot store. The dashboard collector maintains incremental runtime mirrors and a disposable persistent serving model; neither becomes an authority for Control Plane state.
 
 ### Operator, WorkerAgent, Coordinator and Handler
 

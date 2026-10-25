@@ -66,7 +66,7 @@ services/code-loop/
 │   │   ├── client.py         # worker 传输（TLS 钉扎/Bearer/无自动重试）
 │   │   ├── observer.py       # 观察层：全系统唯一爬取路径（增量、原始 JSON 保真，CP/dashboard 共用同一个 store）
 │   │   └── worker.py         # WorkerService（本地执行 + 远程协调，与 Service 同方法面；claim_raw 带 ttl/item）
-│   ├── dash/                 # 面板后端（分层 store/schema/ingest/serve；增量镜像、受监督采集和有限持久读模型；前端源码见 frontend/）
+│   ├── dash/                 # 面板后端（store facade + schema/ingest/verdicts/views/health 分层 + serve/collect/notify；增量镜像、受监督采集和有限持久读模型；前端源码见 frontend/）
 │   ├── agent.py              # WorkerAgent：WS 常驻，校验 typed task → 本机执行 → 状态回报
 │   ├── worker_task_protocol.py # task envelope/schema/action ID 严格校验
 │   ├── worker_task_store.py  # worker-local command idempotency journal
