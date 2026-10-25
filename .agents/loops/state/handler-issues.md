@@ -4,6 +4,8 @@
 
 | # | 状态 | 标题 | 链接 |
 |---|---|---|---|
+| 27 | Open | [vibe-coding][P2] 按项目实际能力约束架构文档同步与 lint:arch 门禁 | https://github.com/helloimcx/skills/issues/27 |
+| 26 | Open | [code-loop][P1] 修正 Reviewer Skill 与运行时判词、报告格式及人工合并契约不一致 | https://github.com/helloimcx/skills/issues/26 |
 | 25 | Open | [code-loop][Handler] 定时处理 PR 验证失败并区分修复归属 | https://github.com/helloimcx/skills/issues/25 |
 | 21 | Open | [code-loop][Operator] 增加模型可用性、调用预算与显式备选模型策略 | https://github.com/helloimcx/skills/issues/21 |
 | 20 | Open | [code-loop][Operator] 增加隔离演练模式，验证异常发现、诊断与拟执行动作 | https://github.com/helloimcx/skills/issues/20 |
