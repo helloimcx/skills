@@ -344,8 +344,32 @@ def load_global_worker_config(path=None, cwd=None):
     return merged
 
 
+def load_worker_coordinator_config(path=None, project=None):
+    """Read the machine default coordinator runtime with an optional project
+    override, without requiring a project checkout (worker-only diagnosis)."""
+    path, raw = _read_global_worker_file(path)
+    if project is None:
+        merged = {k: raw[k] for k in _MACHINE_FIELDS if k in raw}
+    else:
+        merged = _merge_machine_config(raw, project)
+    agent = merged.get('coordinator_agent')
+    model = merged.get('coordinator_model')
+    if model is not None and agent is None:
+        raise ValueError('INVALID_CONFIG: coordinator_model requires coordinator_agent')
+    if agent is not None:
+        from .. import agent_runners
+        try:
+            agent, model = agent_runners.validate_coordinator(agent, model)
+        except ValueError as exc:
+            raise ValueError('INVALID_CONFIG: ' + str(exc)) from None
+    return {'coordinator_agent': agent, 'coordinator_model': model,
+            'maintenance': _validate_maintenance(merged.get('maintenance')),
+            'config_path': str(path)}
+
+
 _MACHINE_FIELDS = ('state_dir', 'worktree_root', 'interpreter', 'verify_timeout',
-                   'verify_rerun', 'verify_attribution', 'gate_command_allow')
+                   'verify_rerun', 'verify_attribution', 'gate_command_allow',
+                   'coordinator_agent', 'coordinator_model', 'maintenance')
 
 
 def _merge_machine_config(cfg, key):
@@ -371,6 +395,55 @@ def _validate_machine_flags(cfg):
     if not isinstance(cfg['gate_command_allow'], list) or \
             not all(isinstance(x, str) and x.strip() for x in cfg['gate_command_allow']):
         raise ValueError('INVALID_CONFIG: gate_command_allow')
+    coordinator = _validate_coordinator_fields(cfg)
+    cfg.update(coordinator)
+    cfg['maintenance'] = _validate_maintenance(cfg.get('maintenance'))
+
+
+def _validate_maintenance(value):
+    """Allow only exact, worker-local scheduler and service registrations."""
+    import re
+    if value is None:
+        value = {}
+    if not isinstance(value, dict) or set(value) - {'scheduler_tasks', 'services'}:
+        raise ValueError('INVALID_CONFIG: maintenance')
+    tasks = value.get('scheduler_tasks', {})
+    services = value.get('services', {})
+    if not isinstance(tasks, dict) or set(tasks) - {'discover'}:
+        raise ValueError('INVALID_CONFIG: maintenance.scheduler_tasks')
+    if not isinstance(services, dict) or set(services) - {'worker_agent'}:
+        raise ValueError('INVALID_CONFIG: maintenance.services')
+    normalized_tasks = {}
+    for key, task in tasks.items():
+        if not isinstance(task, dict) or set(task) - {'name', 'path'}:
+            raise ValueError('INVALID_CONFIG: maintenance.scheduler_tasks.' + key)
+        name = task.get('name')
+        path = task.get('path', '\\')
+        if (not isinstance(name, str) or not re.fullmatch(r'[A-Za-z0-9_. -]{1,128}', name)
+                or not isinstance(path, str) or not re.fullmatch(r'\\(?:[A-Za-z0-9_. -]+\\)*', path)):
+            raise ValueError('INVALID_CONFIG: maintenance.scheduler_tasks.' + key)
+        normalized_tasks[key] = {'name': name, 'path': path}
+    normalized_services = {}
+    for key, name in services.items():
+        if (not isinstance(name, str)
+                or not re.fullmatch(r'[A-Za-z0-9_.-]{1,128}', name)):
+            raise ValueError('INVALID_CONFIG: maintenance.services.' + key)
+        normalized_services[key] = name
+    return {'scheduler_tasks': normalized_tasks, 'services': normalized_services}
+
+
+def _validate_coordinator_fields(cfg):
+    agent = cfg.get('coordinator_agent')
+    model = cfg.get('coordinator_model')
+    if model is not None and agent is None:
+        raise ValueError('INVALID_CONFIG: coordinator_model requires coordinator_agent')
+    if agent is not None:
+        from .. import agent_runners
+        try:
+            agent, model = agent_runners.validate_coordinator(agent, model)
+        except ValueError as exc:
+            raise ValueError('INVALID_CONFIG: ' + str(exc)) from None
+    return {'coordinator_agent': agent, 'coordinator_model': model}
 
 
 def _inherit_verify_timeout(merged, config_dir):

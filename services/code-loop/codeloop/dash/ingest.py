@@ -8,6 +8,7 @@ import hashlib
 import json
 from decimal import Decimal, InvalidOperation
 
+from .. import agent_runners
 from .schema import LINK_RE, _hash
 
 
@@ -40,7 +41,8 @@ def set_project_trigger(db, org_repo, **fields):
     columns). Keys: repo_cwd / entry_doc / rules_doc (non-empty strings) and
     spawn_command (list of argv strings, stored JSON-encoded). Raises
     ValueError on unknown keys or bad value types."""
-    unknown = set(fields) - {'repo_cwd', 'entry_doc', 'rules_doc', 'spawn_command'}
+    unknown = set(fields) - {'repo_cwd', 'entry_doc', 'rules_doc', 'spawn_command',
+                             'coordinator_agent', 'coordinator_model'}
     if unknown:
         raise ValueError('unknown keys ' + ','.join(sorted(unknown)))
     updates = {}
@@ -57,6 +59,19 @@ def set_project_trigger(db, org_repo, **fields):
                 or not all(isinstance(x, str) and x for x in command)):
             raise ValueError('spawn_command must be a non-empty string list')
         updates['spawn_command'] = json.dumps(command)
+    current = db.execute(
+        'SELECT coordinator_agent,coordinator_model FROM projects WHERE org_repo=?',
+        (org_repo,)).fetchone()
+    old_agent = current['coordinator_agent'] if current is not None else None
+    old_model = current['coordinator_model'] if current is not None else None
+    if 'coordinator_agent' in fields or 'coordinator_model' in fields:
+        agent = fields.get('coordinator_agent', old_agent)
+        model = fields.get('coordinator_model', old_model)
+        if agent is None:
+            raise ValueError('COORDINATOR_AGENT_REQUIRED')
+        agent, model = agent_runners.validate_coordinator(agent, model)
+        updates['coordinator_agent'] = agent
+        updates['coordinator_model'] = model
     with db:
         row = db.execute('SELECT id FROM projects WHERE org_repo=?',
                          (org_repo,)).fetchone()

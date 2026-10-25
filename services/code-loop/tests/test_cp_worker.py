@@ -178,6 +178,24 @@ class WorkerTests(unittest.TestCase):
         status = w.status()
         self.assertEqual(status['executions'].get('SUCCEEDED'), 1)
 
+    def test_discover_batch_worker_begins_and_commits_each_action(self):
+        w = self.worker()
+        w.sync()
+        self.platform.data['issues'] = [self.issue()]
+        w.sync()
+        execution = w.claim('discover', 'inspector')
+        self.assertIsNotNone(execution)
+        w.report(execution['id'], execution['token'], {
+            'decision': 'CONFIRMED', 'reviewer': 'independent-reviewer',
+            'summary': 'two findings', 'actions': [
+                {'action': 'create_issue', 'payload': {'title': '[Content] first', 'body': 'proof one'}},
+                {'action': 'create_issue', 'payload': {'title': '[Content] second', 'body': 'proof two'}},
+            ]})
+        result = w.publish(execution['id'], execution['token'])
+        self.assertEqual([r['number'] for r in result['issues']], [100, 101])
+        self.assertEqual([a for a, _, _ in self.platform.writes], ['create_issue', 'create_issue'])
+        self.assertEqual(w.status()['executions'].get('SUCCEEDED'), 1)
+
     def test_handler_flow_uses_policy_cache_and_pushes_locally(self):
         self.platform.data['issues'] = [self.issue()]
         w = self.worker()

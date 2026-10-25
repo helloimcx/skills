@@ -118,6 +118,10 @@ class Store(CommandStore):
                 id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL,
                 payload TEXT NOT NULL, created_at REAL NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS event_sources (
+                source_id TEXT PRIMARY KEY,
+                event_id INTEGER REFERENCES events(id)
+            );
             CREATE TABLE IF NOT EXISTS outbox (
                 id TEXT PRIMARY KEY, execution_id TEXT NOT NULL REFERENCES executions(id),
                 action TEXT NOT NULL, payload TEXT NOT NULL, state TEXT NOT NULL,
@@ -228,14 +232,56 @@ class Store(CommandStore):
             self.db.commit()
 
     def event(self, kind, payload):
-        self.db.execute('INSERT INTO events(kind,payload,created_at) VALUES (?,?,?)',
-                        (kind, _json(payload), time.time()))
+        cur = self.db.execute(
+            'INSERT INTO events(kind,payload,created_at) VALUES (?,?,?)',
+            (kind, _json(payload), time.time()))
         if self.on_event is not None:
             try:
-                self.on_event(kind, payload)
+                self.on_event(kind, dict(payload or {}, event_id=cur.lastrowid))
             except Exception as exc:  # loud, never fatal to the writer
                 print('codeloop: event sink failed for %s: %s' % (kind, exc),
                       file=sys.stderr)
+        return cur.lastrowid
+
+    def events_after(self, event_id=0, limit=500):
+        if not isinstance(event_id, int) or isinstance(event_id, bool) or event_id < 0:
+            raise ValueError('EVENT_CURSOR_INVALID')
+        if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1 or limit > 5000:
+            raise ValueError('EVENT_LIMIT_INVALID')
+        rows = self.db.execute(
+            'SELECT id,kind,payload,created_at FROM events WHERE id>? '
+            'ORDER BY id LIMIT ?', (event_id, limit)).fetchall()
+        return [{'id': row['id'], 'kind': row['kind'],
+                 'payload': json.loads(row['payload']),
+                 'created_at': row['created_at']} for row in rows]
+
+    def latest_event_id(self):
+        row = self.db.execute('SELECT coalesce(max(id),0) AS id FROM events').fetchone()
+        return int(row['id'])
+
+    def event_source_seen(self, source_id):
+        return self.db.execute('SELECT 1 FROM event_sources WHERE source_id=?',
+                               (source_id,)).fetchone() is not None
+
+    def remember_event_source(self, source_id, event_id=None):
+        if not isinstance(source_id, str) or not source_id:
+            raise ValueError('EVENT_SOURCE_INVALID')
+        self.db.execute(
+            'INSERT OR IGNORE INTO event_sources(source_id,event_id) VALUES (?,?)',
+            (source_id, event_id))
+
+    def event_with_sources(self, kind, payload, source_ids):
+        """Persist one event for unseen source facts inside the caller's tx."""
+        fresh = sorted({source for source in source_ids
+                        if isinstance(source, str) and source
+                        and not self.event_source_seen(source)})
+        if not fresh:
+            return None
+        body = dict(payload, source_ids=fresh)
+        event_id = self.event(kind, body)
+        for source_id in fresh:
+            self.remember_event_source(source_id, event_id)
+        return event_id
 
     def put_item(self, key, kind, version, payload, resources, priority=0, state='READY'):
         if not all(isinstance(x, str) and x for x in (key, kind, version)):
@@ -574,7 +620,23 @@ class Store(CommandStore):
             result = json.loads(row['result'])
             if not isinstance(result, dict):
                 raise ValueError('not a mapping')
-            if result.get('action') and not self.db.execute(
+            if result.get('actions') is not None:
+                actions = result['actions']
+                if not isinstance(actions, list):
+                    return None
+                # An empty list is the normal no-publication report shape
+                # used by operator rounds. Non-empty actions are the Discover
+                # batch protocol and require every child outbox to be SENT.
+                for index, action in enumerate(actions):
+                    if (not isinstance(action, dict)
+                            or action.get('action') != 'create_issue'):
+                        return None
+                    operation = version([execution, 'report-action', index], {})
+                    if not self.db.execute(
+                            "SELECT 1 FROM outbox WHERE id=? AND state='SENT'",
+                            (operation,)).fetchone():
+                        return None
+            elif result.get('action') and not self.db.execute(
                     "SELECT 1 FROM outbox WHERE id=? AND state='SENT'",
                     (version([execution, result], {}),)).fetchone():
                 return None

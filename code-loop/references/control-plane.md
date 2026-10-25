@@ -102,6 +102,7 @@ python scripts/control_plane.py verify --execution <ID> --token <TOKEN>
 
 # 7. 提交总结与判词（Report）
 python scripts/control_plane.py report --execution <ID> --token <TOKEN> --file <report.json>
+# Discover 可用互斥的 actions 数组在同一轮发布多条 Issue（每批最多 10 条）
 
 # 8. 发布到平台（Publish：发评论/合并PR/推分支）
 python scripts/control_plane.py publish --execution <ID> --token <TOKEN>
@@ -110,6 +111,10 @@ python scripts/control_plane.py publish --execution <ID> --token <TOKEN>
 python scripts/control_plane.py enable
 python scripts/control_plane.py disable
 ```
+
+普通 report 继续使用单个 `action` / `payload`。Discover 批量建单时改用
+`actions: [{"action":"create_issue","payload":{"title":"…","body":"…"}}]`，
+不可同时传入两种格式；批次逐条写入 outbox，只有全部收到回执后 execution 才成功。
 
 ---
 

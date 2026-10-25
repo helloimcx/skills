@@ -23,6 +23,13 @@ def cfg():
 
 class FaceRoundBase(unittest.TestCase):
     def setUp(self):
+        # Serve-side setup wires additional process-global verbs. Keep these
+        # unit tests independent of collection order and the server profile.
+        self.saved_face_wired = set(face.WIRED)
+        self.saved_face_executor = face._EXECUTOR
+        face.WIRED.clear()
+        face.WIRED.update({'no_op', 'sweep_expired'})
+        face._EXECUTOR = None
         self.home = tempfile.mkdtemp(prefix='op-face-')
         self.store = op_store.open_store(self.home)
         item, _ = op_store.put_signal(self.store, source='alert', kind='loop_stall',
@@ -33,6 +40,9 @@ class FaceRoundBase(unittest.TestCase):
 
     def tearDown(self):
         self.store.db.close()
+        face.WIRED.clear()
+        face.WIRED.update(self.saved_face_wired)
+        face._EXECUTOR = self.saved_face_executor
 
 
 class ActTests(FaceRoundBase):

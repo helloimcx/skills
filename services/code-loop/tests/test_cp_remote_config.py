@@ -16,7 +16,8 @@ for _p in (str(_Path(__file__).resolve().parents[1]),
     if _p not in _sys.path:
         _sys.path.insert(0, _p)
 
-from codeloop.cp.runtime import load_config, load_global_worker_config, load_server_config
+from codeloop.cp.runtime import (load_config, load_global_worker_config,
+                                 load_server_config, load_worker_coordinator_config)
 
 
 def git(path, *args):
@@ -157,6 +158,24 @@ class GlobalWorkerConfigTests(unittest.TestCase):
         self.set_origin('https://gitea.invalid/a/b.git')
         self.write_global({'server': {'url': 'http://cp.lan:8722'}})
         with self.assertRaisesRegex(ValueError, 'SERVER_URL_REQUIRES_TLS'):
+            load_global_worker_config(self.global_path, cwd=str(self.repo))
+
+    def test_worker_maintenance_registry_is_exact_and_available_without_project_cwd(self):
+        self.set_origin('https://gitea.invalid/a/b.git')
+        registered = {'scheduler_tasks': {'discover': {
+            'name': 'CodeLoop-Discover', 'path': '\\'}},
+            'services': {'worker_agent': 'CodeLoopWorkerAgent'}}
+        self.write_global({'server': {'url': 'http://127.0.0.1:8722'},
+                           'maintenance': registered})
+        cfg = load_global_worker_config(self.global_path, cwd=str(self.repo))
+        self.assertEqual(registered, cfg['maintenance'])
+        self.assertEqual(registered, load_worker_coordinator_config(
+            self.global_path)['maintenance'])
+
+        self.write_global({'server': {'url': 'http://127.0.0.1:8722'},
+                           'maintenance': {'scheduler_tasks': {'anything': {
+                               'name': 'unregistered'}}}})
+        with self.assertRaisesRegex(ValueError, 'maintenance.scheduler_tasks'):
             load_global_worker_config(self.global_path, cwd=str(self.repo))
 
 

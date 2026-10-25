@@ -285,7 +285,7 @@ const REPORTED_EVENTS = [
 const AGENT_EVENTS = [
  {gap:0,   st:'text', tx:'你是独立代码评审员，评审一个 bug 修复。只读评审，不要修改任何文件。\n\n## 背景\nIssue #536：总览页首刷 9.8s，根因是 store 零索引导致 2270 次全表扫描。修复 PR：portal-536（worktree 已建）。\n\n## 要求\n- 覆盖率闭环：建立 (path,status) 清单核对 100% 显式覆盖\n- 仅 Critical/High 设卡，格式问题不算阻塞\n- 逐条验证 Finding，不机械接受'},
  {gap:2.4, st:'think', fold:true, tx:'先看 diff 范围和索引迁移脚本，确认 WHERE 前缀与索引列序一致；再核对测试是否覆盖了「无索引→有索引」的前后对比，以及迁移的幂等性。'},
- {gap:1.1, st:'tool', tx:'Bash git diff master…portal-536 --stat', out:'services/portal/store.py        | 32 +++++++\nservices/portal/migrations/0007_idx.sql | 9 +++\ntests/test_store_index.py         | 41 +++++++'},
+ {gap:1.1, st:'tool', tx:'Bash git diff main…portal-536 --stat', out:'services/portal/store.py        | 32 +++++++\nservices/portal/migrations/0007_idx.sql | 9 +++\ntests/test_store_index.py         | 41 +++++++'},
  {gap:1.8, st:'tool', tx:'Read services/portal/migrations/0007_idx.sql', out:'CREATE INDEX IF NOT EXISTS idx_wi_cover\n  ON work_items(project_id, kind, created_at);'},
  {gap:2.2, st:'tool', tx:'Grep "SELECT .* FROM work_items" services/portal/store.py', out:'store.py:88  WHERE project_id=? AND kind=? ORDER BY created_at\nstore.py:141 WHERE project_id=? AND state=?'},
  {gap:1.6, st:'think', fold:true, tx:'88 行查询与复合索引列序完全对齐；141 行只按 project_id+state 过滤——索引前缀 project_id 仍可用，扫描量从全表降到项目内。迁移用 IF NOT EXISTS，幂等成立。'},

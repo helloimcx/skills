@@ -26,6 +26,202 @@ from codeloop.cp.service import Service
 from _service_test_base import Platform, git, ServiceTestsBase
 
 class ServicePublishTests(ServiceTestsBase):
+    def _repair_events(self, service):
+        rows = service.store.db.execute(
+            "SELECT id,payload FROM events WHERE kind='pr.handler_repair_needed' "
+            'ORDER BY id').fetchall()
+        return [(row['id'], json.loads(row['payload'])) for row in rows]
+
+    def test_new_review_and_conflict_edges_coalesce_and_replay_once(self):
+        s, p = self._fresh({})
+        p.data['prs'] = [self.pr()]
+        s.sync()  # Existing state at first observation is not backfilled.
+        self.assertEqual([], self._repair_events(s))
+
+        changed = self.pr()
+        changed['reviews'] = [{'id': 77, 'user': {'id': 9},
+                               'state': 'REQUEST_CHANGES',
+                               'body': 'private review text'}]
+        changed['mergeable'] = False
+        p.data['prs'] = [changed]
+        self.expire_observer()
+        s.sync()
+        events = self._repair_events(s)
+        self.assertEqual(1, len(events))
+        payload = events[0][1]
+        self.assertEqual('pr.handler_repair_needed', payload['kind'])
+        self.assertEqual(2, payload['number'])
+        self.assertEqual(['changes_requested', 'merge_conflict'],
+                         payload['reasons'])
+        self.assertIn('github-review:77', payload['source_ids'])
+        self.assertNotIn('private review text', json.dumps(payload))
+        item = next(row for row in s.store.items('handler')
+                    if row['key'] == 'repair:2')
+        self.assertEqual(['changes_requested', 'merge_conflict'],
+                         json.loads(item['payload'])['repair_reasons'])
+
+        self.expire_observer()
+        s.sync()
+        self.assertEqual(1, len(self._repair_events(s)))
+
+    def test_new_conflict_edge_without_review_creates_conflict_task(self):
+        s, p = self._fresh({})
+        p.data['prs'] = [self.pr()]
+        s.sync()
+        changed = self.pr()
+        changed['mergeable'] = False
+        p.data['prs'] = [changed]
+        self.expire_observer()
+        s.sync()
+        events = self._repair_events(s)
+        self.assertEqual(1, len(events))
+        self.assertEqual(['merge_conflict'], events[0][1]['reasons'])
+        item = next(row for row in s.store.items('handler')
+                    if row['key'] == 'repair:2')
+        payload = json.loads(item['payload'])
+        self.assertEqual('PR_CONFLICT_RESOLUTION', payload['task'])
+        self.assertEqual(['merge_conflict'], payload['repair_reasons'])
+
+    def test_persistent_conflict_on_new_head_creates_fresh_repair_event(self):
+        s, p = self._fresh({})
+        initial = self.pr()
+        p.data['prs'] = [initial]
+        s.sync()
+
+        conflicted = self.pr()
+        conflicted['mergeable'] = False
+        p.data['prs'] = [conflicted]
+        self.expire_observer()
+        s.sync()
+        self.assertEqual(1, len(self._repair_events(s)))
+
+        updated = self.pr()
+        updated['head'] = {'sha': 'head-after-push', 'ref': 'feature/fix'}
+        updated['mergeable'] = False
+        p.data['prs'] = [updated]
+        self.expire_observer()
+        s.sync()
+
+        events = self._repair_events(s)
+        self.assertEqual(2, len(events))
+        self.assertEqual('head-after-push', events[-1][1]['head_sha'])
+        self.assertEqual(['merge_conflict'], events[-1][1]['reasons'])
+
+    def test_validation_failed_outbox_does_not_create_auto_repair_event(self):
+        s, p = self._fresh({})
+        pr = self.pr()
+        p.data['prs'] = [pr]
+        s.sync()
+        item = next(row for row in s.store.items('reviewer')
+                    if row['state'] == 'READY')
+        execution = s.claim('reviewer', 'reviewer', item_id=item['id'])
+        s.report(execution['id'], execution['token'], {
+            'decision': 'Validation failed', 'reviewer': 'reviewer-agent',
+            'summary': 'checks could not be verified', 'action': 'review_comment',
+            'payload': {'number': 2, 'body': 'cannot validate'}})
+        s.publish(execution['id'], execution['token'])
+        s.sync()
+        self.assertEqual([], self._repair_events(s))
+
+    def test_sent_reviewer_changes_requested_verdict_creates_one_event(self):
+        s, p = self._fresh({})
+        p.data['prs'] = [self.pr()]
+        s.sync()
+        item = next(row for row in s.store.items('reviewer')
+                    if row['state'] == 'READY')
+        execution = s.claim('reviewer', 'reviewer', item_id=item['id'])
+        s.report(execution['id'], execution['token'], {
+            'decision': 'Changes requested', 'reviewer': 'reviewer-agent',
+            'summary': 'needs a correction', 'action': 'review_comment',
+            'payload': {'number': 2, 'body': 'please correct the result'}})
+        s.publish(execution['id'], execution['token'])
+        self.expire_observer()
+        s.sync()
+        events = self._repair_events(s)
+        self.assertEqual(1, len(events))
+        self.assertEqual(['changes_requested'], events[0][1]['reasons'])
+        self.assertTrue(any(source.startswith('reviewer-verdict:')
+                            for source in events[0][1]['source_ids']))
+        self.expire_observer()
+        s.sync()
+        self.assertEqual(1, len(self._repair_events(s)))
+    @staticmethod
+    def _batch_report():
+        return {'decision': 'CONFIRMED', 'reviewer': 'verifier', 'summary': 'two independent findings',
+                'actions': [
+                    {'action': 'create_issue', 'payload': {'title': '[Content] first', 'body': 'proof one'}},
+                    {'action': 'create_issue', 'payload': {'title': '[Content] second', 'body': 'proof two'}},
+                ]}
+
+    def test_batch_publish_only_terminalizes_after_every_child_is_sent(self):
+        s, p = self._fresh({})
+        s.sync()
+        e = s.claim('discover', 'inspector')
+        s.report(e['id'], e['token'], self._batch_report())
+        result = s.publish(e['id'], e['token'])
+        self.assertEqual([r['number'] for r in result['issues']], [100, 101])
+        rows = s.store.db.execute('SELECT state FROM outbox ORDER BY id').fetchall()
+        self.assertEqual([r['state'] for r in rows], ['SENT', 'SENT'])
+        self.assertEqual(s.store.db.execute('SELECT state FROM executions WHERE id=?',
+                                            (e['id'],)).fetchone()['state'], 'SUCCEEDED')
+        self.assertEqual(len(p.writes), 2)
+
+    def test_batch_partial_unknown_recovers_without_duplicate_issue(self):
+        s, p = self._fresh({})
+        s.sync()
+        e = s.claim('discover', 'inspector')
+        s.report(e['id'], e['token'], self._batch_report())
+        p.uncertain = True
+        with self.assertRaisesRegex(ValueError, 'PUBLICATION_UNKNOWN'):
+            s.publish(e['id'], e['token'])
+        states = [r['state'] for r in s.store.db.execute('SELECT state FROM outbox ORDER BY id')]
+        self.assertEqual(states, ['UNKNOWN'])
+        self.assertEqual(s.store.db.execute('SELECT state FROM executions WHERE id=?',
+                                            (e['id'],)).fetchone()['state'], 'RUNNING')
+        p.uncertain = False
+        result = s.publish(e['id'], e['token'])
+        self.assertEqual([r['number'] for r in result['issues']], [100, 101])
+        self.assertEqual(len(p.writes), 2, 'first Issue is reconciled by marker, not recreated')
+        self.assertEqual([r['state'] for r in s.store.db.execute(
+            'SELECT state FROM outbox ORDER BY id')], ['SENT', 'SENT'])
+        self.assertEqual(s.store.db.execute('SELECT state FROM executions WHERE id=?',
+                                            (e['id'],)).fetchone()['state'], 'SUCCEEDED')
+
+    def test_batch_schema_role_and_report_freeze_guards(self):
+        s, _ = self._fresh({})
+        s.sync()
+        e = s.claim('discover', 'inspector')
+        malformed = self._batch_report()
+        malformed['action'] = 'create_issue'
+        malformed['payload'] = {'title': 'mixed', 'body': 'not allowed'}
+        with self.assertRaisesRegex(ValueError, 'ACTION_FIELDS_MUTUALLY_EXCLUSIVE'):
+            s.report(e['id'], e['token'], malformed)
+        malformed = self._batch_report()
+        malformed['actions'][0] = {'action': 'review_comment', 'payload': {'number': 1, 'body': 'no'}}
+        with self.assertRaisesRegex(ValueError, 'BATCH_ACTION_FORBIDDEN'):
+            s.report(e['id'], e['token'], malformed)
+        self.assertEqual(s.store.db.execute('SELECT COUNT(*) FROM outbox').fetchone()[0], 0)
+        s.report(e['id'], e['token'], self._batch_report())
+        prepared = s.prepare_publish(e['id'], e['token'], action_index=0)
+        s.complete_publish(e['id'], e['token'], prepared['op'], pushed=True)
+        changed = self._batch_report()
+        changed['actions'][0]['payload']['title'] = '[Content] changed after publish began'
+        with self.assertRaisesRegex(ValueError, 'PUBLICATION_ALREADY_STARTED'):
+            s.report(e['id'], e['token'], changed)
+        self.assertEqual(s.store.db.execute('SELECT state FROM executions WHERE id=?',
+                                            (e['id'],)).fetchone()['state'], 'RUNNING')
+
+    def test_batch_actions_are_rejected_for_non_discover_role(self):
+        s, p = self._fresh({})
+        pr = self.pr()
+        pr['body'] = 'fix'
+        p.data['prs'] = [pr]
+        s.sync()
+        e = s.claim('reviewer', 'reviewer-worker')
+        with self.assertRaisesRegex(ValueError, 'INVALID_ACTIONS'):
+            s.report(e['id'], e['token'], self._batch_report())
+        self.assertEqual(s.store.db.execute('SELECT COUNT(*) FROM outbox').fetchone()[0], 0)
+
     def test_uncertain_publish_recovers_without_duplicate(self):
         self.s.sync()
         e = self.s.claim('discover', 'inspector')

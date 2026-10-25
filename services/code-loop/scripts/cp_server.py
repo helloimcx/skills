@@ -359,11 +359,47 @@ def repair_tick(coordinator, settings):
                 service.store.db.close()
             except Exception:
                 pass
+    registry = coordinator.registry()
+    try:
+        task_counts = registry.worker_tasks.sweep()
+        requeued += task_counts.get('requeued', 0)
+    except Exception:
+        pass
+    try:
+        from codeloop.dash.schema import ALERT_DEFAULTS
+        configured = settings.get('worker_stall_seconds') or {}
+        threshold = configured.get(
+            'discover', ALERT_DEFAULTS['worker_stall_seconds']['discover'])
+        machines = registry.list_machines()
+        for project_key in coordinator.exposed_keys():
+            try:
+                service = coordinator.service_for(project_key)
+            except Exception:
+                continue
+            try:
+                project_machines = [dict(
+                    machine,
+                    granted=registry.has_grant(machine['id'], project_key))
+                    for machine in machines]
+                service.evaluate_worker_stalls(
+                    project_machines, threshold=threshold)
+            except Exception:
+                pass
+            finally:
+                service.store.db.close()
+    except Exception:
+        pass
+    finally:
+        registry.close()
     if requeued:
         try:
             coordinator.dispatcher.dispatch()
         except Exception:
             pass
+    try:
+        coordinator.dispatcher.dispatch_worker_tasks()
+    except Exception:
+        pass
     return requeued
 
 

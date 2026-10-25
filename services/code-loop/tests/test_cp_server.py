@@ -146,6 +146,41 @@ class ServerTests(unittest.TestCase):
         self.assertTrue(env['ok'])
         self.assertEqual(env['result']['protocol_version'], 1)
 
+    def test_worker_task_report_is_bound_to_the_claimed_machine(self):
+        machine = self.registry.authenticate(self.token)
+        task, _ = self.registry.worker_tasks.enqueue(
+            'worker.project_diagnose', target_machine_id=machine['id'],
+            project='a__b', payload={'loop': 'discover'},
+            source_event_id='stall:a__b:discover:1', now=1000.0)
+        self.registry.worker_tasks.mark_dispatched(task['id'], machine['id'], now=1001.0)
+        body = {'task': task['id'], 'state': 'RUNNING', 'session_id': 'sess-1'}
+        status, env = self.request('POST', '/api/v1/worker-tasks/report',
+                                   body, token=self.token)
+        self.assertEqual(200, status)
+        self.assertTrue(env['ok'])
+        self.assertEqual(('RUNNING', 'sess-1'),
+                         (env['result']['state'], env['result']['session_id']))
+
+        other_code = self.registry.create_enroll_code('dev-c', [])
+        other = self.request('POST', '/api/v1/enroll',
+                             {'code': other_code})[1]['result']
+        status, env = self.request(
+            'POST', '/api/v1/worker-tasks/report',
+            {'task': task['id'], 'state': 'SUCCEEDED',
+             'result': {'summary': 'spoof'}}, token=other['token'])
+        self.assertEqual(409, status)
+        self.assertEqual('TASK_NOT_OWNED', env['code'])
+        self.assertEqual('RUNNING', self.registry.worker_tasks.get(task['id'])['state'])
+
+        status, env = self.request(
+            'POST', '/api/v1/worker-tasks/report',
+            {'task': task['id'], 'state': 'SUCCEEDED',
+             'result': {'summary': 'checked', 'actions': []}}, token=self.token)
+        self.assertEqual(200, status)
+        self.assertEqual('SUCCEEDED', env['result']['state'])
+        self.assertEqual({'summary': 'checked', 'actions': []},
+                         env['result']['result'])
+
     def test_auth_matrix(self):
         status, env = self.request('POST', '/api/projects/a__b/sync', {})
         self.assertEqual(status, 401)

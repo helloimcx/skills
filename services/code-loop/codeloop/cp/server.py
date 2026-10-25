@@ -23,8 +23,8 @@ from .registry import Registry, RegistryError
 from .runtime import load_server_config
 from .service import Service
 
-READ_VERBS = {'sync', 'status', 'list'}
-WRITES = {'claim', 'bind', 'verify', 'report', 'publish/begin', 'publish/commit',
+READ_VERBS = {'sync', 'status', 'list', 'executions'}
+WRITES = {'claim', 'bind', 'verify', 'report', 'abandon', 'publish/begin', 'publish/commit',
           'command_ack', 'command_progress'}
 LOOPS = ('discover', 'handler', 'reviewer')
 
@@ -49,6 +49,7 @@ class Coordinator:
         # this coordinator hands out, so serve-side CP writes reach the
         # operator subscription at the write point itself.
         self.event_sink = None
+        self.worker_task_sink = None
 
     def service_for(self, key):
         if not re.fullmatch(r'[A-Za-z0-9_.\-]+__[A-Za-z0-9_.\-]+', key or ''):
@@ -68,7 +69,9 @@ class Coordinator:
         else:
             service = Service(cfg, authorization=self.AUTHORIZATION)
         if self.event_sink is not None:
-            service.store.on_event = self.event_sink
+            sink = self.event_sink
+            service.store.on_event = lambda kind, payload: sink(
+                kind, dict(payload or {}, project=key))
         return service
 
     def exposed_keys(self):
@@ -117,10 +120,19 @@ class CommandDispatcher(CapabilityProjection):
         self._registrations = {}      # machine_id -> set(project keys)
         self._by_project = {}         # project key -> set(machine_id)
         self._capabilities = {}   # machine_id -> {models, ts} (live only)
+        self._task_schema_versions = {}  # machine_id -> set[int], announced live
 
     def register(self, machine, conn):
         with self._lock:
             stale = self._connections.get(machine['id'])
+            for key in self._registrations.pop(machine['id'], set()):
+                peers = self._by_project.get(key)
+                if peers is not None:
+                    peers.discard(machine['id'])
+                    if not peers:
+                        self._by_project.pop(key, None)
+            self._task_schema_versions.pop(machine['id'], None)
+            self._capabilities.pop(machine['id'], None)
             self._connections[machine['id']] = conn
             self._machines[machine['id']] = machine
         if stale is not None and stale is not conn:
@@ -142,8 +154,10 @@ class CommandDispatcher(CapabilityProjection):
                         if not peers:
                             self._by_project.pop(key, None)
                 self._capabilities.pop(machine_id, None)
+                self._task_schema_versions.pop(machine_id, None)
 
-    def hello(self, machine, registrations, agents=None):
+    def hello(self, machine, registrations, agents=None,
+              task_schema_versions=None, connection=None):
         """Attach the machine's announced registrations to its live
         connection, filtered to what the registry actually grants the machine
         (a self-reported registration for an ungranted project would make the
@@ -163,6 +177,9 @@ class CommandDispatcher(CapabilityProjection):
         except Exception:
             pass
         with self._lock:
+            if (connection is not None
+                    and self._connections.get(machine_id) is not connection):
+                return False
             for key in self._registrations.get(machine_id, set()) - keys:
                 peers = self._by_project.get(key)
                 if peers is not None:
@@ -172,8 +189,13 @@ class CommandDispatcher(CapabilityProjection):
             for key in keys - self._registrations.get(machine_id, set()):
                 self._by_project.setdefault(key, set()).add(machine_id)
             self._registrations[machine_id] = keys
+            self._task_schema_versions[machine_id] = {
+                value for value in (task_schema_versions or [])
+                if isinstance(value, int) and not isinstance(value, bool)
+                and value > 0}
         if agents is not None:
             self._store_capabilities(machine_id, agents)
+        return True
 
     def registrations(self, keys):
         """Preflight view per project key, both sides scoped to that project:
@@ -300,6 +322,131 @@ class CommandDispatcher(CapabilityProjection):
                 registry.close()
                 service.store.db.close()
         return dispatched
+
+    def dispatch_worker_tasks(self, machine_id=None, now=None):
+        """Deliver machine-scoped typed tasks to connected authorized workers.
+
+        Project tasks can use any enabled, granted machine. Machine tasks are
+        pinned to their target machine. The worker-task ledger owns the
+        single-winner claim; project grants and machine status are re-read
+        immediately before delivery.
+        """
+        registry = self.coordinator.registry()
+        try:
+            try:
+                fresh = {row['id']: row for row in registry.list_machines()}
+            except Exception:
+                fresh = {}
+            with self._lock:
+                candidates = sorted(
+                    (self._last_dispatch.get(mid, 0.0), mid,
+                     self._machines.get(mid))
+                    for mid in self._connections
+                    if machine_id is None or mid == machine_id)
+            dispatched = 0
+            for _, mid, cached in candidates:
+                machine = fresh.get(mid) or cached
+                if machine is None or machine['revoked'] or not machine['enabled']:
+                    continue
+                try:
+                    grants = registry.machine_grants(mid)
+                except Exception:
+                    continue
+                with self._lock:
+                    conn = self._connections.get(mid)
+                    registered_projects = self._registrations.get(mid, set())
+                    schema_versions = self._task_schema_versions.get(mid, set())
+                if conn is None:
+                    continue
+                if not schema_versions:
+                    # A legacy agent may treat the typed task frame as an
+                    # unknown project command. Keep work pending until hello
+                    # advertises a supported task schema.
+                    continue
+                if machine_id is not None:
+                    try:
+                        registry.worker_tasks.requeue_expired_for_machine(
+                            mid, grants & registered_projects,
+                            schema_versions=schema_versions, now=now)
+                    except Exception:
+                        pass
+                for task in registry.worker_tasks.pending_for_machine(
+                        mid, grants, now=now):
+                    if task['schema_version'] not in schema_versions:
+                        continue
+                    if task['project'] and not registry.has_grant(mid, task['project']):
+                        continue
+                    with self._lock:
+                        registered_projects = self._registrations.get(mid, set())
+                    if task['project'] and task['project'] not in registered_projects:
+                        continue
+                    claimed = registry.worker_tasks.mark_dispatched(
+                        task['id'], mid, now=now)
+                    if claimed is None:
+                        continue
+                    frame = self._worker_task_frame(claimed)
+                    try:
+                        conn.send_json({'type': 'command', 'command': frame})
+                    except Exception as exc:
+                        registry.worker_tasks.revert_pending(
+                            task['id'], mid, reason=type(exc).__name__, now=now)
+                        self.unregister(mid, conn)
+                        try:
+                            conn.close()
+                        except Exception:
+                            pass
+                        break
+                    self._last_dispatch[mid] = time.time()
+                    dispatched += 1
+            return dispatched
+        finally:
+            registry.close()
+
+    def enqueue_worker_task(self, task_type, *, project=None,
+                            target_machine_id=None, payload=None,
+                            allowed_actions=None, source_event_id=None,
+                            dedupe_key=None, schema_version=1, ttl=7 * 86400,
+                            now=None):
+        """Persist a typed task and offer it immediately to eligible workers."""
+        registry = self.coordinator.registry()
+        try:
+            if project is not None:
+                service = self.coordinator.service_for(project)
+                service.store.db.close()
+            if target_machine_id is not None:
+                machine = next((row for row in registry.list_machines()
+                                if row['id'] == target_machine_id), None)
+                if machine is None or machine['revoked']:
+                    raise RegistryError('TASK_MACHINE_NOT_FOUND_OR_REVOKED')
+                if project is not None and not registry.has_grant(
+                        target_machine_id, project):
+                    raise RegistryError('PROJECT_NOT_GRANTED')
+            task, created = registry.worker_tasks.enqueue(
+                task_type, project=project,
+                target_machine_id=target_machine_id, payload=payload,
+                allowed_actions=allowed_actions,
+                source_event_id=source_event_id, dedupe_key=dedupe_key,
+                schema_version=schema_version, ttl=ttl, now=now)
+        finally:
+            registry.close()
+        dispatched = (self.dispatch_worker_tasks(
+            machine_id=target_machine_id, now=now) if created else 0)
+        return {'task': task, 'created': created, 'dispatched': dispatched}
+
+    @staticmethod
+    def _worker_task_frame(task):
+        payload = {'id': task['id'],
+                   'schema_version': task['schema_version'],
+                   'task_type': task['task_type'],
+                   'project': task['project'],
+                   'target_machine_id': task['claimed_by'],
+                   'payload': task['payload'],
+                   'allowed_actions': task['allowed_actions'],
+                   'expires_at': task['expires_at'],
+                   'source_event_id': task['source_event_id']}
+        return {'id': task['id'], 'action': 'worker_task',
+                'project': task['project'],
+                'target_machine_id': task['claimed_by'], 'task': payload}
 
     def _command_frame(self, claimed, action, project):
         """On-the-wire frame; spawn options (dialog/cfg picks) ride along only
@@ -444,8 +591,17 @@ class WsConnection:
             return
         kind = message.get('type')
         if kind == 'hello':
-            self.dispatcher.hello(self.machine, message.get('registrations'),
-                                  message.get('agents'))
+            accepted = self.dispatcher.hello(
+                self.machine, message.get('registrations'),
+                message.get('agents'), message.get('task_schema_versions'),
+                connection=self)
+            if not accepted:
+                return
+            # The HTTP upgrade catch-up runs before this hello is read, when
+            # local project registrations are still unknown. Retry machine
+            # tasks now that grants and local checkouts can both be checked.
+            self.dispatcher.dispatch_worker_tasks(
+                machine_id=self.machine['id'])
         elif kind == 'agent_options':
             self.dispatcher.capabilities(self.machine, message.get('agents'))
 
@@ -497,7 +653,7 @@ class Handler(BaseHTTPRequestHandler):
     def _dispatch_project(self, key, verb, body, machine):
         registry = self.coordinator.registry()
         try:
-            if machine is not None and verb in WRITES:
+            if machine is not None and (verb in WRITES or verb == 'executions'):
                 try:
                     registry.require_write_access(machine, key)
                 except RegistryError as exc:
@@ -587,13 +743,59 @@ class Handler(BaseHTTPRequestHandler):
             from ..operator import data_plane as op_data_plane
             op_data_plane.serve_act(self)
             return
+        if path in ('/api/v1/worker-tasks', '/api/v1/worker-tasks/events'):
+            if method != 'GET':
+                raise ProtocolError(405, 'METHOD_NOT_ALLOWED', 'GET required')
+            params = self._query()
+            registry = self.coordinator.registry()
+            try:
+                if path.endswith('/events'):
+                    result = _invoke_worker_task_events(registry, params, machine)
+                else:
+                    result = _invoke_worker_task_list(registry, params, machine)
+            finally:
+                registry.close()
+            self._send(200, envelope_ok(result))
+            return
+        if path == '/api/v1/worker-tasks/report':
+            if method != 'POST':
+                raise ProtocolError(405, 'METHOD_NOT_ALLOWED',
+                                    'POST required for worker task reports')
+            body = self._body()
+            registry = self.coordinator.registry()
+            try:
+                result = _invoke_worker_task_report(registry, body, machine)
+                if (result.get('task_type') == 'pr.repair'
+                        and result.get('state') == 'FAILED'
+                        and body.get('execution_id') and body.get('token') is not None):
+                    _release_worker_task_claim(
+                        self.coordinator, result, body['execution_id'], body['token'])
+                if result.get('state') in ('SUCCEEDED', 'FAILED'):
+                    sink = getattr(self.coordinator, 'worker_task_sink', None)
+                    if callable(sink):
+                        terminal_result = result.get('result') or {}
+                        try:
+                            sink('worker.task.' + result['state'].lower(), {
+                                'task': result['id'], 'task_type': result['task_type'],
+                                'project': result.get('project'),
+                                'machine_id': machine['id'], 'state': result['state'],
+                                'event_id': result.get('task_event_id'),
+                                'summary': (terminal_result.get('summary')
+                                            if isinstance(terminal_result, dict) else None),
+                                'fail_reason': result.get('fail_reason')})
+                        except Exception:
+                            pass  # the machine task event log is the replay floor
+            finally:
+                registry.close()
+            self._send(200, envelope_ok(result))
+            return
         match = re.fullmatch(r'/api/projects/([^/]+)(?:/(.+))?', path)
         if not match:
             raise ProtocolError(404, 'NOT_FOUND', 'unknown route')
         key, verb = match.group(1), match.group(2) or 'status'
         if verb not in READ_VERBS and verb not in WRITES:
             raise ProtocolError(404, 'NOT_FOUND', 'unknown verb: ' + verb)
-        if method != ('GET' if verb in ('status', 'list') else 'POST'):
+        if method != ('GET' if verb in ('status', 'list', 'executions') else 'POST'):
             raise ProtocolError(405, 'METHOD_NOT_ALLOWED', 'wrong method for ' + verb)
         body = self._body() if method == 'POST' else self._query()
         result = self._dispatch_project(key, verb, body, machine)
@@ -624,6 +826,7 @@ class Handler(BaseHTTPRequestHandler):
             # connect-time catch-up: hand this machine everything it is
             # granted for and that queued while it was offline
             dispatcher.dispatch(machine_id=machine['id'])
+            dispatcher.dispatch_worker_tasks(machine_id=machine['id'])
             dispatcher.dispatch_operator()
             conn.serve()
         finally:
@@ -664,7 +867,54 @@ def _invoke_read(service, verb, body):
         return service.sync()
     if verb == 'status':
         return service.status()
+    if verb == 'executions':
+        if body.get('execution_id') is not None:
+            return {'execution': _execution_status(
+                service, body.get('execution_id'))}
+        if body.get('include_terminal') == '1':
+            limit = _task_query_int(body, 'limit', default=20, minimum=1, maximum=100)
+            return {'executions': _recent_executions(service, body.get('loop'), limit)}
+        return {'executions': _active_executions(service, body.get('loop'))}
     return {'items': service.store.items(body.get('kind'))}
+
+
+def _active_executions(service, loop=None):
+    if loop is not None and (not isinstance(loop, str) or not loop):
+        raise ProtocolError(400, 'INVALID_REQUEST', 'loop must be a non-empty string')
+    rows = service.store.db.execute(
+        '''SELECT e.id,e.worker,e.state,e.created_at,e.last_seen_at,e.expires_at,
+                  w.key AS item_key,w.kind
+             FROM executions e JOIN work_items w ON w.id=e.item_id
+            WHERE e.state IN ('RUNNING','VERIFYING') AND e.expires_at>?
+              AND (? IS NULL OR w.kind=? OR w.key LIKE ?)
+            ORDER BY e.created_at DESC LIMIT 100''',
+        (time.time(), loop, loop, (loop + ':%') if loop else '')).fetchall()
+    return [dict(row) for row in rows]
+
+
+def _recent_executions(service, loop=None, limit=20):
+    if loop is not None and (not isinstance(loop, str) or not loop):
+        raise ProtocolError(400, 'INVALID_REQUEST', 'loop must be a non-empty string')
+    if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
+        raise ProtocolError(400, 'INVALID_REQUEST', 'limit is out of range')
+    rows = service.store.db.execute(
+        '''SELECT e.id,e.worker,e.state,e.created_at,e.last_seen_at,e.expires_at,
+                  w.key AS item_key,w.kind
+             FROM executions e JOIN work_items w ON w.id=e.item_id
+            WHERE (? IS NULL OR w.kind=? OR w.key LIKE ?)
+            ORDER BY e.created_at DESC,e.id DESC LIMIT ?''',
+        (loop, loop, (loop + ':%') if loop else '', limit)).fetchall()
+    return [dict(row) for row in rows]
+
+
+def _execution_status(service, execution_id):
+    if not isinstance(execution_id, str) or not execution_id:
+        raise ProtocolError(400, 'INVALID_REQUEST',
+                            'execution_id must be a non-empty string')
+    row = service.store.db.execute(
+        'SELECT id,state,expires_at FROM executions WHERE id=?',
+        (execution_id,)).fetchone()
+    return dict(row) if row is not None else None
 
 
 def _invoke_claim(service, body, machine):
@@ -709,7 +959,8 @@ def _invoke_publish(service, verb, body):
     need('execution', 'token')
     if verb == 'publish/begin':
         return service.prepare_publish(body['execution'], body['token'],
-                                       context=body.get('context'))
+                                       context=body.get('context'),
+                                       action_index=body.get('action_index'))
     need('op')
     return service.complete_publish(body['execution'], body['token'], body['op'],
                                     pushed=body.get('pushed'))
@@ -739,6 +990,80 @@ def _invoke_command_ack(service, body, machine):
             and outcome.upper() == 'FAILED'):
         _release_claim(service, execution, token)
     return acked
+
+
+def _invoke_worker_task_report(registry, body, machine, now=None):
+    if not isinstance(body, dict) or 'task' not in body or 'state' not in body:
+        raise ProtocolError(400, 'INVALID_REQUEST', 'missing fields: task,state')
+    if not isinstance(body['task'], str) or not body['task']:
+        raise ProtocolError(400, 'INVALID_REQUEST', 'task must be a non-empty string')
+    if not isinstance(body['state'], str):
+        raise ProtocolError(400, 'INVALID_REQUEST', 'state must be a string')
+    for key in ('session_id', 'execution_id', 'fail_reason'):
+        if body.get(key) is not None and not isinstance(body[key], str):
+            raise ProtocolError(400, 'INVALID_REQUEST', '%s must be a string' % key)
+    if body.get('token') is not None and (
+            isinstance(body['token'], bool) or not isinstance(body['token'], int)):
+        raise ProtocolError(400, 'INVALID_REQUEST', 'token must be an integer')
+    if body.get('token') is not None and not body.get('execution_id'):
+        raise ProtocolError(400, 'INVALID_REQUEST',
+                            'token requires execution_id')
+    if body.get('result') is not None and not isinstance(body['result'], dict):
+        raise ProtocolError(400, 'INVALID_REQUEST', 'result must be an object')
+    try:
+        task = registry.worker_tasks.report(
+            body['task'], machine['id'], body['state'],
+            session_id=body.get('session_id'),
+            execution_id=body.get('execution_id'),
+            result=body.get('result'), fail_reason=body.get('fail_reason'),
+            now=now)
+    except ValueError as exc:
+        raise ProtocolError(400, 'INVALID_REQUEST', str(exc)) from None
+    if task is None:
+        raise ProtocolError(409, 'TASK_NOT_OWNED',
+                            'task is not claimed by this machine or is terminal')
+    return task
+
+
+def _invoke_worker_task_list(registry, params, machine):
+    limit = _task_query_int(params, 'limit', default=100, minimum=1, maximum=1000)
+    state = params.get('state')
+    if state is not None and state not in (
+            'PENDING', 'CLAIMED', 'RUNNING', 'SUCCEEDED', 'FAILED', 'EXPIRED'):
+        raise ProtocolError(400, 'INVALID_REQUEST', 'state is invalid')
+    tasks = registry.worker_tasks.list_tasks(
+        state=state, target_machine_id=machine['id'], limit=limit)
+    return {'tasks': tasks}
+
+
+def _invoke_worker_task_events(registry, params, machine):
+    after = _task_query_int(params, 'after', default=0, minimum=0, maximum=2 ** 63 - 1)
+    limit = _task_query_int(params, 'limit', default=100, minimum=1, maximum=1000)
+    events = registry.worker_tasks.events_after(machine['id'], after, limit)
+    return {'events': events,
+            'next_cursor': events[-1]['id'] if events else after}
+
+
+def _task_query_int(params, name, *, default, minimum, maximum):
+    raw = params.get(name)
+    if raw is None:
+        return default
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        raise ProtocolError(400, 'INVALID_REQUEST', '%s must be an integer' % name) from None
+    if value < minimum or value > maximum:
+        raise ProtocolError(400, 'INVALID_REQUEST', '%s is out of range' % name)
+    return value
+
+
+def _release_worker_task_claim(coordinator, task, execution, token):
+    """Release a prepared Handler claim after a failed machine task report."""
+    service = coordinator.service_for(task['project'])
+    try:
+        _release_claim(service, execution, token)
+    finally:
+        service.store.db.close()
 
 
 def _release_claim(service, execution, token):
@@ -782,10 +1107,20 @@ def _invoke(service, verb, body, machine):
         return service.status()
     if verb == 'list':
         return {'items': service.store.items(body.get('kind'))}
+    if verb == 'executions':
+        if body.get('execution_id') is not None:
+            return {'execution': _execution_status(
+                service, body.get('execution_id'))}
+        if body.get('include_terminal') == '1':
+            limit = _task_query_int(body, 'limit', default=20, minimum=1, maximum=100)
+            return {'executions': _recent_executions(service, body.get('loop'), limit)}
+        return {'executions': _active_executions(service, body.get('loop'))}
     if verb == 'claim':
         return _invoke_claim(service, body, machine)
     if verb in ('bind', 'verify', 'report'):
         return _invoke_round_write(service, verb, body)
+    if verb == 'abandon':
+        return _invoke_abandon(service, body)
     if verb.startswith('publish/'):
         return _invoke_publish(service, verb, body)
     if verb == 'command_ack':
@@ -793,6 +1128,17 @@ def _invoke(service, verb, body, machine):
     if verb == 'command_progress':
         return _invoke_command_progress(service, body, machine)
     raise ProtocolError(404, 'NOT_FOUND', 'unknown verb: ' + verb)
+
+
+def _invoke_abandon(service, body):
+    if 'execution' not in body or 'token' not in body:
+        raise ProtocolError(400, 'INVALID_REQUEST', 'missing fields: execution,token')
+    if not isinstance(body['execution'], str) or not body['execution']:
+        raise ProtocolError(400, 'INVALID_REQUEST', 'execution must be a string')
+    token = body['token']
+    if isinstance(token, bool) or not isinstance(token, int):
+        raise ProtocolError(400, 'INVALID_REQUEST', 'token must be an integer')
+    return service.abandon(body['execution'], token)
 
 
 def make_server(coordinator, host, port):

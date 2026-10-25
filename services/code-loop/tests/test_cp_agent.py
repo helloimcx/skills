@@ -135,6 +135,113 @@ class AgentGuardTests(unittest.TestCase):
         base.update(overrides)
         return base
 
+    def test_typed_worker_task_runs_once_and_reports_result(self):
+        from codeloop.worker_task_store import WorkerTaskRunStore
+
+        class InlineThread:
+            def __init__(self, target, args, daemon=True):
+                self.target, self.args = target, args
+
+            def start(self):
+                self.target(*self.args)
+
+        task_store = WorkerTaskRunStore(self.root / 'worker-tasks.sqlite')
+        self.agent.worker_task_store_factory = lambda: task_store
+        self.agent.worker_task_thread_factory = InlineThread
+        executions = []
+        self.agent.worker_task_executor = lambda task: executions.append(task) or {
+            'summary': 'discover checked', 'actions': []}
+        command = {
+            'id': 'task-1', 'action': 'worker_task', 'project': 'a__b',
+            'target_machine_id': 'machine-1',
+            'task': {'id': 'task-1', 'schema_version': 1,
+                     'task_type': 'worker.project_diagnose',
+                     'project': 'a__b', 'target_machine_id': 'machine-1',
+                     'payload': {'loop': 'discover'}, 'allowed_actions': [],
+                     'expires_at': self.agent.clock() + 60,
+                     'source_event_id': 'stall:1'}}
+        self.agent.execute(command)
+        self.agent.execute(command)  # replay must not run the local task twice
+        self.assertEqual(1, len(executions))
+        self.assertEqual('SUCCEEDED', task_store.get('task-1')['state'])
+        reports = [call for call in self.client.calls
+                   if call[1] == '/api/v1/worker-tasks/report']
+        self.assertEqual(['RUNNING', 'SUCCEEDED', 'SUCCEEDED'],
+                         [call[2]['state'] for call in reports])
+        self.assertEqual({'summary': 'discover checked', 'actions': []},
+                         reports[1][2]['result'])
+        task_store.close()
+
+    def test_failed_task_replay_resends_saved_claim_fence(self):
+        from codeloop.worker_task_store import WorkerTaskRunStore
+        task_store = WorkerTaskRunStore(self.root / 'worker-tasks.sqlite')
+        task_store.begin('task-failed', 'pr.repair', 'a__b', now=self.agent.clock())
+        task_store.update('task-failed', 'FAILED', execution_id='exec-1',
+                          claim_token=7, fail_reason='runtime failed',
+                          now=self.agent.clock())
+        self.agent.worker_task_store_factory = lambda: task_store
+        command = {
+            'id': 'task-failed', 'action': 'worker_task', 'project': 'a__b',
+            'target_machine_id': 'machine-1',
+            'task': {'id': 'task-failed', 'schema_version': 1,
+                     'task_type': 'pr.repair', 'project': 'a__b',
+                     'target_machine_id': 'machine-1',
+                     'payload': {'number': 42, 'reasons': ['merge_conflict']},
+                     'allowed_actions': [], 'expires_at': self.agent.clock() + 60,
+                     'source_event_id': 'pr-repair:42'}}
+        self.agent.execute(command)
+        report = [call for call in self.client.calls
+                  if call[1] == '/api/v1/worker-tasks/report'][-1][2]
+        self.assertEqual(('FAILED', 'exec-1', 7),
+                         (report['state'], report['execution_id'], report['token']))
+        task_store.close()
+
+    def test_worker_restart_fails_orphaned_task_without_rerunning_it(self):
+        from codeloop.worker_task_store import WorkerTaskRunStore
+        task_store = WorkerTaskRunStore(self.root / 'worker-tasks.sqlite')
+        task_store.begin('task-orphan', 'pr.repair', 'a__b', now=self.agent.clock())
+        task_store.update('task-orphan', 'RUNNING', execution_id='exec-1',
+                          claim_token=7, runtime_pid=2345,
+                          fail_reason=None, now=self.agent.clock())
+        self.agent.worker_task_store_factory = lambda: task_store
+        self.agent.pid_alive_fn = lambda pid: False
+
+        self.agent._recover_worker_tasks()
+
+        self.assertEqual('FAILED', task_store.get('task-orphan')['state'])
+        report = [call for call in self.client.calls
+                  if call[1] == '/api/v1/worker-tasks/report'][-1][2]
+        self.assertEqual(('FAILED', 'exec-1', 7),
+                         (report['state'], report['execution_id'], report['token']))
+        task_store.close()
+
+    def test_prepared_claim_is_journaled_before_runtime_spawn(self):
+        from codeloop.worker_task_store import WorkerTaskRunStore
+        task_store = WorkerTaskRunStore(self.root / 'worker-tasks.sqlite')
+        task_store.begin('task-prepared', 'pr.repair', 'a__b', now=self.agent.clock())
+        self.agent.worker_task_store_factory = lambda: task_store
+        self.agent._record_worker_task_claim(
+            'task-prepared', 'exec-prepared', 19, str(self.root / 'worktree'))
+        record = task_store.get('task-prepared')
+        self.assertEqual(('exec-prepared', 19, str(self.root / 'worktree')),
+                         (record['execution_id'], record['claim_token'],
+                          record['worktree']))
+        report = [call for call in self.client.calls
+                  if call[1] == '/api/v1/worker-tasks/report'][-1][2]
+        self.assertEqual(('RUNNING', 'exec-prepared', 19),
+                         (report['state'], report['execution_id'], report['token']))
+        task_store.close()
+
+    def test_registered_coordinator_binary_is_checked_before_claim(self):
+        import unittest.mock as mock
+        self.row = registration(self.root, self.root / 'missing-claude',
+                                coordinator_agent='claude')
+        row = self.agent._task_registration('a__b', require_handler=False)
+        with mock.patch.object(agent_mod.shutil, 'which', return_value=None):
+            with self.assertRaises(review_round.PrepareError) as caught:
+                self.agent._coordinator_runtime(row, {}, 'pr.repair')
+        self.assertIn('COORDINATOR_RUNTIME_MISSING', caught.exception.message)
+
     def test_unregistered_project_is_acked_not_spawned(self):
         self.row = None
         self.agent.execute(self.command())

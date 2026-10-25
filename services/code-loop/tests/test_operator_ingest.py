@@ -40,6 +40,7 @@ class ConfigTests(unittest.TestCase):
         self.assertFalse(c['watchdog_auto_spawn'])
         self.assertIn('loop_stall', c['alert_rules'])
         self.assertNotIn('needs_human_aging', c['alert_rules'])
+        self.assertIn('worker.task.succeeded', c['event_kinds'])
         with self.assertRaises(ValueError):
             op_config.load_operator_config({'operator': {'nope': 1}})
 
@@ -147,6 +148,70 @@ class IngestEventTests(unittest.TestCase):
         ds = op_ingest.ingest_event(self.store, cfg(), 'command.enqueued', {},
                                     project='', now=1_000.0, home=self.home)
         self.assertEqual(ds['decision'], 'skipped_rule')
+
+    def test_pr_repair_event_becomes_machine_task_without_operator_round(self):
+        class Dispatcher:
+            def __init__(self):
+                self.calls = []
+
+            def enqueue_worker_task(self, *args, **kwargs):
+                self.calls.append((args, kwargs))
+                return {'created': True, 'task': {'id': 'task-1'}, 'dispatched': 0}
+
+        dispatcher = Dispatcher()
+        event = {'kind': 'pr.handler_repair_needed', 'entity': 'pr:42',
+                 'source_event_id': 'pr-repair:source-1', 'number': 42,
+                 'reasons': ['changes_requested', 'merge_conflict'],
+                 'source_ids': ['review:1', 'merge:1']}
+        result = op_ingest.ingest_event(
+            self.store, cfg(), 'pr.handler_repair_needed', event,
+            project='mocx__skills', event_id=91, dispatcher=dispatcher,
+            now=1_000.0, home=self.home)
+        self.assertEqual('fired', result['decision'])
+        self.assertEqual('task-1', result['task']['id'])
+        args, kwargs = dispatcher.calls[0]
+        self.assertEqual('pr.repair', args[0])
+        self.assertEqual('mocx__skills', kwargs['project'])
+        self.assertEqual(42, kwargs['payload']['number'])
+        self.assertEqual(['changes_requested', 'merge_conflict'],
+                         kwargs['payload']['reasons'])
+        self.assertEqual('pr-repair:source-1', kwargs['source_event_id'])
+
+    def test_worker_stall_event_carries_machine_and_allowlisted_actions(self):
+        class Dispatcher:
+            def __init__(self):
+                self.calls = []
+
+            def enqueue_worker_task(self, *args, **kwargs):
+                self.calls.append((args, kwargs))
+                return {'created': True, 'task': {'id': 'diag-1'}, 'dispatched': 1}
+
+        dispatcher = Dispatcher()
+        event = {'kind': 'worker.loop_stalled', 'entity': 'worker:m1:discover',
+                 'source_event_id': 'worker-stall:event-1', 'machine_id': 'm1',
+                 'loop': 'discover', 'last_execution_id': 'exec-7',
+                 'age_seconds': 70000}
+        result = op_ingest.ingest_event(
+            self.store, cfg(), 'worker.loop_stalled', event,
+            project='mocx__skills', event_id=92, dispatcher=dispatcher,
+            now=1_000.0, home=self.home)
+        self.assertEqual('diag-1', result['task']['id'])
+        args, kwargs = dispatcher.calls[0]
+        self.assertEqual('worker.project_diagnose', args[0])
+        self.assertEqual('m1', kwargs['target_machine_id'])
+        self.assertEqual('mocx__skills', kwargs['project'])
+        self.assertIn('discover.run_once', kwargs['allowed_actions'])
+
+    def test_worker_task_result_is_logged_without_starting_an_operator_round(self):
+        result = op_ingest.ingest_event(
+            self.store, cfg(), 'worker.task.succeeded',
+            {'task': 'task-1', 'task_type': 'worker.project_diagnose',
+             'state': 'SUCCEEDED', 'machine_id': 'm1',
+             'result': {'summary': 'discover is healthy'}},
+            now=2000, home=self.home)
+        self.assertEqual('task_result', result['decision'])
+        self.assertEqual(0, self.store.db.execute(
+            "SELECT count(*) FROM work_items WHERE kind='operator'").fetchone()[0])
 
     def test_watchdog_ingestion_with_line_cursor(self):
         log = Path(self.home) / 'watchdog.jsonl'
