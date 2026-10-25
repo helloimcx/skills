@@ -185,7 +185,7 @@ python3 -m unittest discover -s tests -p 'test_*.py'                   # 快速�
 python3 -m unittest discover -s services/code-loop/tests -p 'test_*.py' # 完整服务回归
 ```
 
-GitHub Actions 在每次 PR、推送 main 和手动触发时，使用 Python 3.9 与 3.13 并行运行仓库契约和完整服务回归；最终必须通过 `CI Gate`。本地开发通常先跑定向测试和仓库契约；高风险改动扩大验证范围。Reviewer 的完整考题与 CI 全量套件都保留。检查工作流本身不等于开启 GitHub 分支保护，目标项目需在工作流稳定通过后把确切 job 检查名加入 required checks。
+GitHub Actions 在每次 PR、推送 main 和手动触发时，使用项目声明的最低兼容版本 Python 3.9 运行仓库契约和完整服务回归；最终必须通过 `CI Gate`。本地开发通常先跑定向测试和仓库契约；高风险改动扩大验证范围。Reviewer 的完整考题与 CI 全量套件都保留。检查工作流本身不等于开启 GitHub 分支保护，目标项目需在工作流稳定通过后把确切 job 检查名加入 required checks。
 
 ### 测试分层映射
 

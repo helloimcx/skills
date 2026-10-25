@@ -78,7 +78,7 @@ The Control Plane also stores machine-scoped Operator tasks. **Operator is the g
 
 ### Test and CI flow
 
-The repository contract suite and code-loop service suite are independent GitHub Actions jobs. Each runs on Python 3.9 and 3.13 for every pull request, `main` push, and manual dispatch. A final `CI Gate` job succeeds only after both suites succeed on both matrix versions. Developers can run related tests first and expand coverage based on risk; code-loop Handler verification uses the project's optional `verification_fast` commands when present, while Reviewer verification remains complete. The required-check entry is configured separately in the target repository's base-commit `.code-loop/verify.json` and branch protection. See [CI workflow](../.github/workflows/ci.yml).
+The repository contract suite and code-loop service suite are independent GitHub Actions jobs. Each runs on Python 3.9, the project's declared minimum supported version, for every pull request, `main` push, and manual dispatch. A final `CI Gate` job succeeds only after both suites pass. Developers can run related tests first and expand coverage based on risk; code-loop Handler verification uses the project's optional `verification_fast` commands when present, while Reviewer verification remains complete. The required-check entry is configured separately in the target repository's base-commit `.code-loop/verify.json` and branch protection. See [CI workflow](../.github/workflows/ci.yml).
 
 ## Development and Validation
 

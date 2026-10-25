@@ -71,36 +71,38 @@ class OpencodeStorageTest(unittest.TestCase):
                    created_ms=T_MS, mtime=None):
         """One opencode round: a session, its user prompt (optionally naming
         the execution) and an assistant message with one part of each kind."""
+        user_message_id = 'msg_u_' + session_id
+        assistant_message_id = 'msg_a_' + session_id
         self.write('session/p1/%s.json' % session_id,
                    session_json(session_id, directory, created_ms),
                    mtime=mtime if mtime is not None else created_ms / 1000)
-        self.write('message/%s/msg_u.json' % session_id,
-                   message_json('msg_u', session_id, 'user', created_ms))
-        self.write('part/msg_u/prt_1.json',
-                   part_json('prt_1', 'msg_u', session_id, type='text',
+        self.write('message/%s/%s.json' % (session_id, user_message_id),
+                   message_json(user_message_id, session_id, 'user', created_ms))
+        self.write('part/%s/prt_1.json' % user_message_id,
+                   part_json('prt_1', user_message_id, session_id, type='text',
                              text='评审 PR #1。execution=%s、token=1。' % EXEC
                              if with_exec else '按 PR 扫描流程执行。'))
-        self.write('message/%s/msg_a.json' % session_id,
-                   message_json('msg_a', session_id, 'assistant',
+        self.write('message/%s/%s.json' % (session_id, assistant_message_id),
+                   message_json(assistant_message_id, session_id, 'assistant',
                                 created_ms + 1))
-        self.write('part/msg_a/prt_1.json',
-                   part_json('prt_1', 'msg_a', session_id, type='text',
+        self.write('part/%s/prt_1.json' % assistant_message_id,
+                   part_json('prt_1', assistant_message_id, session_id, type='text',
                              text='判词：通过。'))
-        self.write('part/msg_a/prt_2.json',
-                   part_json('prt_2', 'msg_a', session_id, type='reasoning',
+        self.write('part/%s/prt_2.json' % assistant_message_id,
+                   part_json('prt_2', assistant_message_id, session_id, type='reasoning',
                              text='先看 diff 范围。',
                              time={'start': created_ms + 2,
                                    'end': created_ms + 3}))
-        self.write('part/msg_a/prt_3.json',
-                   part_json('prt_3', 'msg_a', session_id, type='tool',
+        self.write('part/%s/prt_3.json' % assistant_message_id,
+                   part_json('prt_3', assistant_message_id, session_id, type='tool',
                              tool='bash',
                              state={'status': 'completed',
                                     'input': {'command': 'gitea diff 1'},
                                     'output': '+ line', 'title': 'diff',
                                     'time': {'start': created_ms + 4,
                                              'end': created_ms + 5}}))
-        self.write('part/msg_a/prt_4.json',
-                   part_json('prt_4', 'msg_a', session_id,
+        self.write('part/%s/prt_4.json' % assistant_message_id,
+                   part_json('prt_4', assistant_message_id, session_id,
                              type='step-start'))
 
     # ---- binding ----
@@ -183,8 +185,8 @@ class OpencodeStorageTest(unittest.TestCase):
 
     def test_tail_tool_event_carries_output_and_error_state(self):
         self.seed_round('ses_match', self.repo)
-        self.write('part/msg_a/prt_5.json',
-                   part_json('prt_5', 'msg_a', 'ses_match', type='tool',
+        self.write('part/msg_a_ses_match/prt_5.json',
+                   part_json('prt_5', 'msg_a_ses_match', 'ses_match', type='tool',
                              tool='bash',
                              state={'status': 'error',
                                     'input': {'command': 'python -m pytest'},
@@ -205,8 +207,8 @@ class OpencodeStorageTest(unittest.TestCase):
                                                    offset=first['offset'])
                          ['events'])
         # a part that lands after the cursor: only the new event comes back
-        self.write('part/msg_a/prt_9.json',
-                   part_json('prt_9', 'msg_a', 'ses_match', type='text',
+        self.write('part/msg_a_ses_match/prt_9.json',
+                   part_json('prt_9', 'msg_a_ses_match', 'ses_match', type='text',
                              text='补充说明。'))
         grown = opencode_storage.tail('ses_match', offset=first['offset'])
         self.assertEqual(['补充说明。'], [e['text'] for e in grown['events']])
@@ -223,7 +225,7 @@ class OpencodeStorageTest(unittest.TestCase):
 
     def test_tail_survives_a_malformed_part_file(self):
         self.seed_round('ses_match', self.repo)
-        self.write('part/msg_a/prt_bad.json', 'not json')
+        self.write('part/msg_a_ses_match/prt_bad.json', 'not json')
         r = opencode_storage.tail('ses_match')
         self.assertEqual(self.seeded_events(),
                          [e['text'] for e in r['events']])

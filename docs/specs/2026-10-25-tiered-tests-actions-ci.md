@@ -47,10 +47,10 @@
 ### GitHub Actions
 
 - Workflow 名为 `CI`；监听 `pull_request`（默认活动）、`push` 到 main、`workflow_dispatch`。PR 测试默认合并引用，main push 测试实际 main 提交。
-- Ubuntu hosted runner，Python 3.9 与 3.13 两个版本。3.9 检验现有最低兼容声明，3.13 提供较新解释器回归；Ubuntu 验证不等于 Windows/macOS 兼容验证。
-- 两个独立矩阵 job：仓库契约与服务套件，四个测试单元并行；矩阵 `fail-fast: false`，保留每个版本的失败结果。
+- Ubuntu hosted runner，使用 Python 3.9 验证现有最低兼容声明；Ubuntu 验证不等于 Windows/macOS 兼容验证。
+- 两个独立 job：仓库契约与服务套件，并行执行；单一解释器避免为每个 PR 重复运行完整套件。
 - 仓库契约：`python -m unittest discover -s tests -p 'test_*.py'`。根测试已执行分发契约、设计检查器和 shim 子套件，不额外重复运行这些子套件。
-- 服务套件：`python -m unittest discover -s services/code-loop/tests -p 'test_*.py'`，不把 pytest 专有 conftest 行为宣称为 unittest 保证。
+- 服务套件：`python -m unittest discover -s services/code-loop/tests -p 'test_*.py'`，运行时区固定为 `Asia/Shanghai` 以验证产品声明的本地日历日期，不把 pytest 专有 conftest 行为宣称为 unittest 保证。
 - 仓库 job 增加 Python 源文件编译检查，范围使用显式的仓库代码目录；不编译 `.git` 或 worktree 元数据。
 - 固定最终 job/check 名 `CI Gate`；`needs` 所有测试 job，使用 `always()`，只有全部依赖结果严格为 success 才成功，失败、取消或意外跳过均不得误绿。
 - 工作流无顶层 paths 过滤、无文档 PR 例外、无 `continue-on-error`；PR 更新按 PR/ref 分组取消过时 CI，main 事件单独分组。

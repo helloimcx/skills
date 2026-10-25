@@ -20,7 +20,7 @@ class GitHubActionsContractTests(unittest.TestCase):
         self.assertIn("workflow_dispatch:", workflow)
         self.assertNotIn("paths:", workflow)
 
-    def test_ci_workflow_tests_repository_and_service_across_supported_versions(self) -> None:
+    def test_ci_workflow_tests_repository_and_service_on_supported_baseline(self) -> None:
         workflow = WORKFLOW.read_text(encoding="utf-8")
 
         self.assertIn("python -m unittest discover -s tests -p 'test_*.py'", workflow)
@@ -28,8 +28,11 @@ class GitHubActionsContractTests(unittest.TestCase):
             "python -m unittest discover -s services/code-loop/tests -p 'test_*.py'",
             workflow,
         )
-        self.assertIn("python-version: ['3.9', '3.13']", workflow)
-        self.assertIn("fail-fast: false", workflow)
+        self.assertIn("name: Repository tests (Python 3.9)", workflow)
+        self.assertIn("name: Service tests (Python 3.9)", workflow)
+        self.assertEqual(3, workflow.count("python-version: '3.9'"))
+        self.assertNotIn("matrix:", workflow)
+        self.assertNotIn("3.13", workflow)
 
     def test_ci_workflow_uses_hardened_actions_and_stable_final_gate(self) -> None:
         workflow = WORKFLOW.read_text(encoding="utf-8")
@@ -51,7 +54,7 @@ class GitHubActionsContractTests(unittest.TestCase):
         self.assertIn("name: CI Gate", workflow)
         self.assertTrue(GATE.is_file(), "CI Gate needs a tested result evaluator")
 
-    def test_gate_fails_when_any_matrix_suite_failed_cancelled_or_skipped(self) -> None:
+    def test_gate_fails_when_any_test_job_failed_cancelled_or_skipped(self) -> None:
         cases = (
             ("failure", "success"),
             ("cancelled", "success"),
@@ -76,7 +79,7 @@ class GitHubActionsContractTests(unittest.TestCase):
                 )
                 self.assertNotEqual(0, result.returncode)
 
-    def test_gate_passes_only_when_all_matrix_suites_succeeded(self) -> None:
+    def test_gate_passes_only_when_all_test_jobs_succeeded(self) -> None:
         result = subprocess.run(
             [
                 sys.executable,

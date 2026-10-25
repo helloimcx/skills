@@ -16,13 +16,9 @@ concurrency:
 
 jobs:
   repository-tests:
-    name: Repository tests (Python ${{ matrix.python-version }})
+    name: Repository tests (Python 3.9)
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ['3.9', '3.13']
     steps:
       - name: Check out source
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -32,7 +28,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: '3.9'
 
       - name: Set temporary Git identity
         run: |
@@ -49,13 +45,11 @@ jobs:
           tests vibe-coding
 
   service-tests:
-    name: Service tests (Python ${{ matrix.python-version }})
+    name: Service tests (Python 3.9)
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ['3.9', '3.13']
+    env:
+      TZ: Asia/Shanghai
     steps:
       - name: Check out source
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -65,7 +59,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: '3.9'
 
       - name: Set temporary Git identity
         run: |
@@ -90,7 +84,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: '3.13'
+          python-version: '3.9'
 
       - name: Require every test job to succeed
         env:

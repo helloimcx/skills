@@ -29,7 +29,7 @@ python3 -m unittest discover -s tests -p 'test_*.py'
 python3 -m unittest discover -s services/code-loop/tests -p 'test_*.py'
 ```
 
-GitHub Actions 会在所有 Pull Request、推送到 `main` 和手动触发时运行上述两套测试，覆盖 Python 3.9 与 3.13，并汇总到 `CI Gate`。该检查默认提供 CI 结果；要阻止不通过的 PR 合并，目标仓库还需把实际运行成功的 `CI Gate` 配置为 required status check。code-loop 项目的快速门禁另由 base commit 中的 `.code-loop/verify.json` 配置。
+GitHub Actions 会在所有 Pull Request、推送到 `main` 和手动触发时使用 Python 3.9 运行上述两套测试，并汇总到 `CI Gate`。3.9 是项目声明的最低兼容版本。该检查默认提供 CI 结果；要阻止不通过的 PR 合并，目标仓库还需把实际运行成功的 `CI Gate` 配置为 required status check。code-loop 项目的快速门禁另由 base commit 中的 `.code-loop/verify.json` 配置。
 
 ## Installation & Usage
 

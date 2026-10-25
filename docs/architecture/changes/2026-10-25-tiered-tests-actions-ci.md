@@ -6,7 +6,7 @@ Plan: [Expected verification flow](../../plans/2026-10-25-tiered-tests-actions-c
 
 ## Change
 
-The repository gains a Python 3.9 / 3.13 GitHub Actions workflow for root contract and code-loop service tests. The `CI Gate` aggregate reports failure unless both jobs pass. Contributors may use related tests for fast iteration and expand validation based on change risk. The code-loop documentation now reflects the already implemented `verification_fast` tier for non-reviewer execution and full verification for the Reviewer.
+The repository gains a Python 3.9 GitHub Actions workflow for root contract and code-loop service tests. Python 3.9 is the declared minimum supported version. The `CI Gate` aggregate reports failure unless both jobs pass. Contributors may use related tests for fast iteration and expand validation based on change risk. The code-loop documentation now reflects the already implemented `verification_fast` tier for non-reviewer execution and full verification for the Reviewer.
 
 ## Architecture impact
 
@@ -15,8 +15,8 @@ The change adds a hosted verification path and updates the contributor feedback 
 ```mermaid
 flowchart LR
   PR[Pull request / main push / manual]
-  PR --> R[Repository contracts: Python 3.9 and 3.13]
-  PR --> S[Service suite: Python 3.9 and 3.13]
+  PR --> R[Repository contracts: Python 3.9]
+  PR --> S[Service suite: Python 3.9]
   R --> G[CI Gate: all jobs must succeed]
   S --> G
   H[Handler verification] --> F{verification_fast configured?}

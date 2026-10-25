@@ -1,6 +1,6 @@
 # 测试分层与 GitHub Actions 实施计划
 
-状态：实现与独立 Review 完成；本地 QA 通过，等待 GitHub Actions 托管运行。
+状态：实现与单版本调整完成；独立 Review 和本地 QA 已通过。
 
 对应规格：[Spec](../specs/2026-10-25-tiered-tests-actions-ci.md)。
 
@@ -20,8 +20,8 @@ flowchart LR
   F --> P[推送与创建 PR]
   V --> P
   P --> C[GitHub Actions CI 新增]
-  C --> R[仓库契约 Python 3.9 与 3.13]
-  C --> U[服务完整测试 Python 3.9 与 3.13]
+  C --> R[仓库契约 Python 3.9]
+  C --> U[服务完整测试 Python 3.9]
   R --> G[CI Gate 汇总全部结果]
   U --> G
   P --> L[Reviewer 完整 verification 保留]
@@ -43,8 +43,8 @@ flowchart LR
    - 修改 `code-loop/SKILL.md`、`code-loop/references/control-plane.md`：补齐快速层示例、缺省回退及独立 PR 生效约束。
    - 修改 `code-loop/references/reviewer.md`：明确 Reviewer 始终完整验证，检查 CI 不能代替本地 verify；报告只声明实际通过的检查。
 3. **新增 CI**
-   - 添加 `.github/workflows/ci.yml`，采用 Spec 规定的触发器、版本与 job 布局。
-   - 测试矩阵并行运行仓库契约和服务套件，最终输出稳定的 `CI Gate`。
+   - 添加 `.github/workflows/ci.yml`，采用 Spec 规定的触发器、Python 3.9 基线与 job 布局。
+   - 仓库契约和服务套件在同一 Python 3.9 版本的独立 job 中并行运行，最终输出稳定的 `CI Gate`。
    - 为结果汇总设置 `always()` 和严格成功判断；固定 Action SHA、只读权限、显式超时及并发取消策略。
    - 不添加 `.code-loop/verify.json`，避免在工作流尚未生效时改变目标项目原有考题来源或引入不存在的必需检查。
 4. **文档与架构同步**
@@ -59,24 +59,24 @@ flowchart LR
 
 ## 验证策略与顺序
 
-1. 新增工作流契约测试：缺失工作流 RED → 实现后 GREEN；覆盖三个触发入口、四个矩阵测试单元和 Gate 对失败/取消/跳过的处理。
+1. 新增工作流契约测试：缺失工作流 RED → 实现后 GREEN；覆盖三个触发入口、单版本的两个测试 job 和 Gate 对失败/取消/跳过的处理。
 2. 原有分层测试：`python3 services/code-loop/tests/test_control_plane_runtime.py`；定向执行 Worker 中已有的快速层端到端测试，核对具体方法名后运行。
 3. 工作流 YAML 解析与 actionlint：确认 Actions 表达式、事件、job 依赖与安全配置。
 4. 仓库契约：`python3 -m unittest discover -s tests -p 'test_*.py'`。其中已启动 skill 子套件，不另行重复。
 5. 服务完整套件：`python3 -m unittest discover -s services/code-loop/tests -p 'test_*.py'`。这次属于新增 CI 入口的基线验证，不能只以定向测试代替。
 6. 与 CI 一致的 Python 源文件编译检查；`git diff --check`；审查完整工作区 diff。
-7. 本机只有 Python 3.9.6，其他解释器若不可用则由真实 CI 验证，不假报本地跨版本通过。
+7. 本机 Python 3.9.6 与 CI 的 3.9 主次版本一致；由真实 CI 验证 Ubuntu 运行结果。
 
 ## Verification evidence
 
-- `[PASS]` 新增工作流契约：`python3 -m unittest tests.test_github_actions_ci`，5 tests passed；测试覆盖 PR/main/manual 触发、两个测试 job 的 3.9/3.13 矩阵、权限与 action SHA、依赖结果映射、失败/取消/跳过拒绝，以及全成功通过。
+- `[PASS]` 新增工作流契约：`python3 -m unittest tests.test_github_actions_ci`，5 tests passed；测试覆盖 PR/main/manual 触发、两个测试 job 均使用 Python 3.9、权限与 action SHA、依赖结果映射、失败/取消/跳过拒绝，以及全成功通过。
 - `[PASS]` 原有快速层解析/选择回归：`python3 -m unittest services.code-loop.tests.test_control_plane_runtime.ExamParseTests.test_resolve_verification_kind_tiers`。
 - `[PASS]` 根目录完整契约：`python3 -m unittest discover -s tests -p 'test_*.py'`，22 tests passed。
-- `[PASS]` 服务完整套件：`python3 -m unittest discover -s services/code-loop/tests -p 'test_*.py'`，1,407 tests passed，2 个 Windows 专属 `mbcs` 测试在 macOS 按既有规则跳过。
+- `[PASS]` 服务完整套件：`TZ=Asia/Shanghai python3 -m unittest discover -s services/code-loop/tests -p 'test_*.py'`，1,482 tests passed，2 个 Windows 专属 `mbcs` 测试在 macOS 按既有规则跳过。
 - `[PASS]` Python 源编译检查、`git diff --check` 和 actionlint 1.7.12。actionlint 的 macOS arm64 发行包校验和验证通过后用于检查 `.github/workflows/ci.yml`。
 - `[PASS]` code-loop skill frontmatter/body 手动验证；Skill Creator 的 `quick_validate.py` 需要本环境未安装的 PyYAML，因此没有声称该验证器通过，也未为单次检查安装依赖。
-- `[PASS]` 独立只读 Review：未发现阻塞或高严重度问题；Reviewer 核实工作流事件、矩阵、固定 Action SHA、最小权限及 Gate 失败关闭行为。
-- `[PENDING]` 尚无 GitHub Actions 托管运行结果；只有将分支推送并创建 PR 后，才能验证 GitHub 的运行环境与状态检查展示。
+- `[PASS]` 独立只读 Review：未发现阻塞或高严重度问题；Reviewer 核实工作流事件、解释器版本、固定 Action SHA、最小权限及 Gate 失败关闭行为。
+- `[FIXED]` 首次 Ubuntu 运行发现两个测试环境问题：本地日期测试依赖 UTC+8，而 hosted runner 默认 UTC；OpenCode 测试夹具在不同会话间复用消息文件名。CI 已固定 `TZ=Asia/Shanghai`，夹具改为会话唯一 ID；两个定向测试和本地完整服务套件均通过。
 
 ## 风险与交付边界
 

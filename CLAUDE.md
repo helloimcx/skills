@@ -21,7 +21,7 @@ Do NOT install skills to Claude until the user explicitly confirms approval.
 - 开发与缺陷修复优先运行修改点和相关模块测试；影响范围不明确或风险较高时扩大验证范围。
 - 根目录契约入口：`python3 -m unittest discover -s tests -p 'test_*.py'`。
 - code-loop 服务完整入口：`python3 -m unittest discover -s services/code-loop/tests -p 'test_*.py'`。
-- GitHub Actions 在 PR、main push 和手动触发时并行执行两套入口（Python 3.9 / 3.13）；成功汇总检查名为 `CI Gate`。
+- GitHub Actions 在 PR、main push 和手动触发时使用 Python 3.9 执行两套入口；成功汇总检查名为 `CI Gate`。
 - code-loop Handler 先做定向回归，再按目标仓库 base commit 考题配置执行快速层或回退到完整层；Reviewer 始终跑完整验证。
 - `CI Gate` 只有在目标仓库配置为 required check 后才会阻止不通过的合并。
 
