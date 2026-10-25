@@ -4,6 +4,7 @@
 
 | # | 状态 | 标题 | 链接 |
 |---|---|---|---|
+| 29 | Open | [❓needs-human] [code-loop][Operator] discover 定时循环因 Codex 用量额度超限失败，两个项目 discover 已停滞约 42 小时 | https://github.com/helloimcx/skills/issues/29 |
 | 27 | Open | [vibe-coding][P2] 按项目实际能力约束架构文档同步与 lint:arch 门禁 | https://github.com/helloimcx/skills/issues/27 |
 | 26 | Open | [code-loop][P1] 修正 Reviewer Skill 与运行时判词、报告格式及人工合并契约不一致 | https://github.com/helloimcx/skills/issues/26 |
 | 25 | Open | [code-loop][Handler] 定时处理 PR 验证失败并区分修复归属 | https://github.com/helloimcx/skills/issues/25 |
