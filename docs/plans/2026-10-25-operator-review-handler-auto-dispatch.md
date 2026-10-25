@@ -77,7 +77,7 @@ flowchart LR
 
 ## 基线与交付
 
-本任务分支基于已正式评审但尚未合并的 PR #22 (`codex/2026-10-25-operator-event-consumer`)；本功能同时扩展 Operator durable event consumer 与 worker command dispatch。PR #22 合并后，将本功能 PR 的 base 调整到 `main`，避免重复包含 #22 改动。
+本功能分支最初基于已正式评审但尚未合并的 PR #22 (`codex/2026-10-25-operator-event-consumer`)，并同时扩展 Operator durable event consumer 与 worker command dispatch。随后 PR #24 将 `master` 历史合并进 `main`、保留两边提交，并将 `main` 设为仓库默认分支；本功能 PR 已同步 `main` 且以 `main` 为 base。PR #22 的 consumer 提交仍作为本功能分支的父提交，避免重复实现。
 
 ## 实现后的文档影响记录
 

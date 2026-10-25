@@ -41,3 +41,9 @@ flowchart LR
 ## Docs impact and validation contract
 
 `docs/architecture/modules/code-loop.md`, `docs/architecture.md` and `docs/architecture/modules.md` now describe the task ledger, event flow, WorkerAgent runtime and action boundary. The root README has no managed architecture picture block. This repository currently has Markdown architecture documents only; no L1-L3 JSON schema or `lint:arch` command is present, so no such gate applies. Targeted unit and contract tests cover the task paths, including rollback-safe wakeups, ordered replay, schema/grant/local-registration checks, stale-signal rejection, duplicate action IDs, and native Task evidence. Loopback HTTP/WebSocket integration tests are blocked in the managed sandbox because it denies local socket binding; they remain part of host-side QA.
+
+## Repository branch alignment
+
+- PR #24 merged the former `master` history into `main` with a merge commit, preserving both the Dashboard SQLite fix from `main` and the Discover batch Issue publishing change from `master`.
+- GitHub now uses `main` as the default branch. Open PRs #10, #11, #22 and #23 all target `main`; PR #23 is synced with the migrated `main` history.
+- The local Code Loop project registration for `helloimcx/skills` uses `base: main`, and the Dashboard collection was refreshed. The `base` setting remains project-specific so other repositories can continue using their configured default branch.

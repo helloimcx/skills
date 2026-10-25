@@ -48,7 +48,7 @@
 - runtime 由执行机器按自身安装和凭据验证；machine default 可以有 per-project override。不要依赖 Operator 主机上的 runtime/model 清单。
 - task type 与 maintenance action 独立 allowlist。LLM 输出只能选择已授权 action ID，不能生成新命令、扩展文件范围或提升任务权限。
 - PR 修复与维护状态都持久化；所有可变更操作必须可从 command ID 审计与重放。
-- 新功能分支以已正式评审、尚未合并的 PR #22 为基线；PR #22 合并后将新 PR 的 base 调整到 `main`，避免复制 Operator consumer 改动。
+- 本功能 PR 以 `main` 为 base。仓库已通过 PR #24 将 `master` 历史合并进 `main` 并将 `main` 设为默认分支；本功能分支同时包含 PR #22 的 Operator consumer 提交，避免重复实现该改动。
 
 ## Acceptance Criteria
 
