@@ -146,14 +146,101 @@ def ingest_alerts(store, cfg, alerts, now=None, fresh=True, home=None):
 
 
 def ingest_event(store, cfg, kind, payload, project='', now=None, fresh=True,
-                 home=None):
+                 home=None, dispatcher=None, event_id=None):
     """Consume one CP event (the Store.event sink contract: fast, never throws
     into the writer — callers wrap this)."""
     payload = payload or {}
+    if kind in ('worker.task.succeeded', 'worker.task.failed'):
+        if not event_allowed(cfg, kind):
+            return _decision(store, home, decision='skipped_rule', source='worker_task',
+                             kind=kind, key=payload.get('task') or '',
+                             reason='kind not watched')
+        result = payload.get('result') or {}
+        return _decision(store, home, decision='task_result', source='worker_task',
+                         kind=kind, key=payload.get('task') or '',
+                         task_id=payload.get('task'), machine_id=payload.get('machine_id'),
+                         project=payload.get('project'), state=payload.get('state'),
+                         summary=(result.get('summary') if isinstance(result, dict)
+                                  else payload.get('summary')),
+                         fail_reason=payload.get('fail_reason'))
+    if kind == 'worker.loop_resolved':
+        return _decision(store, home, decision='resolved', source='cp_event',
+                         kind=kind,
+                         key='%s|%s' % (project, payload.get('entity') or ''),
+                         event_id=event_id)
+    if kind in ('pr.handler_repair_needed', 'worker.loop_stalled'):
+        return _ingest_worker_task_event(
+            store, cfg, kind, payload, project, dispatcher=dispatcher,
+            event_id=event_id, now=now, fresh=fresh, home=home)
     key = '%s|%s|%s' % (kind, project, payload.get('entity') or '')
     return check_and_record(store, cfg, source='cp_event', kind=kind, key=key,
                             payload=dict(payload, project=project), org_repo=project,
                             severity='high', now=now, fresh=fresh, home=home)
+
+
+def _ingest_worker_task_event(store, cfg, kind, payload, project, *,
+                              dispatcher, event_id, now, fresh, home):
+    key = '%s|%s' % (project, payload.get('entity') or '')
+    if not event_allowed(cfg, kind):
+        return _decision(store, home, decision='skipped_rule', source='cp_event',
+                         kind=kind, key=key, reason='kind not watched',
+                         event_id=event_id)
+    if dispatcher is None:
+        raise ValueError('WORKER_TASK_DISPATCHER_REQUIRED')
+    now = time.time() if now is None else now
+    if not fresh:
+        return _decision(store, home, decision='stale_noop', source='cp_event',
+                         kind=kind, key=key, event_id=event_id)
+    if kind == 'pr.handler_repair_needed':
+        task_type = 'pr.repair'
+        number = payload.get('number')
+        if isinstance(number, bool) or not isinstance(number, int) or number <= 0:
+            raise ValueError('PR_REPAIR_EVENT_INVALID: number')
+        source_event_id = payload.get('source_event_id') or (
+            'cp-event:%s:%s:%s' % (project, event_id, kind))
+        task_payload = {
+            'number': number, 'head_sha': payload.get('head_sha'),
+            'base_ref': payload.get('base_ref'), 'base_sha': payload.get('base_sha'),
+            'reasons': payload.get('reasons') or [],
+            'source_ids': payload.get('source_ids') or [],
+            'source_event_id': source_event_id}
+        target_machine_id = None
+        allowed_actions = []
+        dedupe_key = 'pr:%s:%s' % (project, number)
+    else:
+        task_type = 'worker.project_diagnose'
+        machine_id = payload.get('machine_id')
+        loop = payload.get('loop')
+        if not isinstance(machine_id, str) or not machine_id:
+            raise ValueError('WORKER_STALL_EVENT_INVALID: machine_id')
+        if loop != 'discover':
+            raise ValueError('WORKER_STALL_EVENT_INVALID: loop')
+        source_event_id = payload.get('source_event_id') or (
+            'cp-event:%s:%s:%s' % (project, event_id, kind))
+        task_payload = {
+            'loop': loop, 'last_execution_id': payload.get('last_execution_id'),
+            'age_seconds': payload.get('age_seconds'),
+            'threshold_seconds': payload.get('threshold_seconds'),
+            'source_event_id': source_event_id}
+        target_machine_id = machine_id
+        allowed_actions = list(cfg.get('maintenance_actions') or ())
+        dedupe_key = 'worker:%s:%s:%s' % (machine_id, project, loop)
+
+    enqueue = dispatcher.enqueue_worker_task(
+        task_type, project=project, target_machine_id=target_machine_id,
+        payload=task_payload, allowed_actions=allowed_actions,
+        source_event_id=source_event_id, dedupe_key=dedupe_key,
+        ttl=cfg['task_ttl_seconds'], now=now)
+    if not enqueue.get('created'):
+        return _decision(store, home, decision='skipped_active',
+                         source='cp_event', kind=kind, key=key,
+                         task=enqueue.get('task'),
+                         reason='same source or target already has a live worker task',
+                         event_id=event_id)
+    _meta_set(store, 'operator_task_last:' + source_event_id, now)
+    return _decision(store, home, decision='fired', source='cp_event',
+                     kind=kind, key=key, task=enqueue.get('task'),
+                     dispatched=enqueue.get('dispatched', 0), event_id=event_id)
 
 
 def ingest_watchdog(store, cfg, log_file, db=None, now=None, home=None):

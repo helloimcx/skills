@@ -160,7 +160,8 @@ class PrepareRoundTests(unittest.TestCase):
                                                 git_fn=self.git)
         self.assertEqual({'execution': 'exec-1', 'token': 3,
                           'worktree': self.worktree, 'branch': None,
-                          'head_ref': None}, round_claim)
+                          'head_ref': None, 'head_sha': 'head88',
+                          'base_ref': None, 'base_sha': None}, round_claim)
         # the short handoff lease is what makes an adopted claim self-heal
         self.assertEqual([(88, 300)], coordinator.claims)
         self.assertEqual([('exec-1', 3, self.worktree, None)], coordinator.binds)

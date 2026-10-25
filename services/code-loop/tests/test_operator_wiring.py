@@ -8,6 +8,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest import mock
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 from urllib.error import HTTPError
@@ -263,9 +264,80 @@ class EventSinkTests(unittest.TestCase):
             self.assertTrue(feed.empty())
             sink('sync.failed', {'detail': 'boom'})
             kind, payload, _ = feed.get_nowait()
-            self.assertEqual(kind, 'sync.failed')
+            self.assertEqual(kind, 'operator.cp.wakeup')
+            self.assertEqual({'project': None}, payload)
         finally:
             store.db.close()
+
+
+class OperatorConsumerTests(unittest.TestCase):
+    def test_event_received_while_waiting_is_processed(self):
+        """A blocking queue read must hand its event to the normal ingest gate."""
+        import queue
+
+        class StopConsumer(Exception):
+            pass
+
+        class Feed:
+            def __init__(self):
+                self.waits = 0
+
+            def get_nowait(self):
+                raise queue.Empty
+
+            def get(self, timeout=None):
+                self.waits += 1
+                if self.waits == 1:
+                    return ('sync.failed', {'entity': 'test'}, time.time())
+                if self.waits == 2:
+                    raise queue.Empty
+                raise StopConsumer
+
+        class InlineThread:
+            def __init__(self, target, daemon):
+                self.target = target
+
+            def start(self):
+                self.target()
+
+        class Store:
+            def __init__(self):
+                self.sweeps = 0
+
+            def sweep_commands(self):
+                self.sweeps += 1
+
+        class Dispatcher:
+            def __init__(self):
+                self.events = []
+
+            def dispatch_operator(self):
+                self.events.append('dispatch')
+
+        feed = Feed()
+        store = Store()
+        dispatcher = Dispatcher()
+        received = []
+
+        def ingest(_store, _cfg, kind, payload, **kwargs):
+            received.append((kind, payload))
+            dispatcher.events.append('ingest:' + kind)
+            return {'decision': 'fired'}
+
+        with mock.patch.object(wiring.queue, 'Queue', return_value=feed), \
+                mock.patch.object(wiring.threading, 'Thread', InlineThread), \
+                mock.patch.object(wiring.op_ingest, 'ingest_event',
+                                  side_effect=ingest), \
+                mock.patch.object(wiring.op_store, 'recycle_wedged_rounds'), \
+                mock.patch.object(wiring.op_store, 'drain_obsolete_readys'), \
+                mock.patch.object(wiring.op_ingest, 'ingest_watchdog'):
+            with self.assertRaises(StopConsumer):
+                wiring.start_consumer(store, cfg(), dispatcher, 'unused')
+
+        self.assertEqual(received, [('sync.failed', {'entity': 'test'})])
+        self.assertEqual(dispatcher.events[:3],
+                         ['dispatch', 'ingest:sync.failed', 'dispatch'])
+        self.assertEqual(store.sweeps, 3)
 
 
 class ExecutorTests(unittest.TestCase):
@@ -385,6 +457,182 @@ class SinkInjectionTests(unittest.TestCase):
         for store in seen:
             if hasattr(store, 'db'):
                 store.db.close()
+
+
+class DurableEventReplayTests(unittest.TestCase):
+    def test_transaction_rollback_wakeup_cannot_ingest_or_advance_cursor(self):
+        from unittest import mock
+        from codeloop.cp.store import Store
+        home = tempfile.mkdtemp(prefix='op-rollback-wakeup-')
+        operator = op_store.open_store(home)
+        project_path = Path(home) / 'project-state'
+        project = Store(project_path)
+        import queue
+        feed = queue.Queue()
+        project.on_event = wiring.make_event_sink(cfg(), feed)
+
+        class Coordinator:
+            def exposed_keys(self):
+                return ['m__repo']
+
+            def service_for(self, key):
+                return type('Service', (), {'store': Store(project_path)})()
+
+        class Dispatcher:
+            def dispatch_operator(self):
+                raise AssertionError('rolled-back event must not dispatch')
+
+        dispatcher = Dispatcher()
+        try:
+            wiring._initialize_event_cursors(operator, Coordinator())
+            with self.assertRaises(RuntimeError):
+                with project.transaction():
+                    project.event('pr.handler_repair_needed', {
+                        'project': 'm__repo', 'number': 42})
+                    raise RuntimeError('rollback')
+            wake = feed.get_nowait()
+            self.assertEqual('operator.cp.wakeup', wake[0])
+            with mock.patch.object(
+                    wiring.op_ingest, 'ingest_event',
+                    side_effect=AssertionError('wakeups are not source events')):
+                self.assertTrue(wiring._ingest_event_safely(
+                    operator, cfg(), wake, dispatcher, home=home))
+                self.assertEqual(0, wiring._replay_cp_events(
+                    operator, cfg(), Coordinator(), dispatcher, home=home))
+            self.assertEqual(0, wiring._event_cursor(operator, 'm__repo'))
+            self.assertEqual(0, project.latest_event_id())
+        finally:
+            project.db.close()
+            operator.db.close()
+
+    def test_worker_task_wakeup_does_not_ingest_or_advance_cursor(self):
+        from unittest import mock
+        home = tempfile.mkdtemp(prefix='op-worker-task-wakeup-')
+        operator = op_store.open_store(home)
+        try:
+            payload = {'machine_id': 'machine-1', 'event_id': 17,
+                       'project': 'm__repo'}
+            with mock.patch.object(
+                    wiring.op_ingest, 'ingest_event',
+                    side_effect=AssertionError('wakeups are not task events')):
+                self.assertTrue(wiring._ingest_event_safely(
+                    operator, cfg(), ('worker.task.wakeup', payload, time.time()),
+                    dispatcher=None, home=home))
+            self.assertEqual(0, wiring._worker_task_event_cursor(
+                operator, 'machine-1'))
+        finally:
+            operator.db.close()
+
+    def test_first_cursor_skips_history_and_later_events_replay_once(self):
+        from unittest import mock
+        from codeloop.cp.store import Store
+        home = tempfile.mkdtemp(prefix='op-replay-')
+        operator = op_store.open_store(home)
+        project = Store(Path(home) / 'project-state')
+
+        class Coordinator:
+            def exposed_keys(self):
+                return ['m__repo']
+
+            def service_for(self, key):
+                reopened = Store(Path(home) / 'project-state')
+                return type('Service', (), {'store': reopened})()
+
+        class Dispatcher:
+            def __init__(self):
+                self.coordinator = Coordinator()
+
+            def dispatch_operator(self):
+                pass
+
+        dispatcher = Dispatcher()
+        try:
+            project.event('sync.failed', {'detail': 'historical'})
+            wiring._initialize_event_cursors(operator, dispatcher.coordinator)
+            self.assertEqual(project.latest_event_id(),
+                             wiring._event_cursor(operator, 'm__repo'))
+            project.event('pr.handler_repair_needed', {
+                'entity': 'pr:42', 'source_event_id': 'repair:42',
+                'number': 42, 'reasons': ['merge_conflict']})
+            received = []
+            with mock.patch.object(
+                    wiring.op_ingest, 'ingest_event',
+                    side_effect=lambda _s, _c, kind, payload, **_kw:
+                    received.append((kind, payload)) or {'decision': 'skipped_rule'}):
+                self.assertEqual(1, wiring._replay_cp_events(
+                    operator, cfg(), dispatcher.coordinator, dispatcher, home=home))
+                self.assertEqual(0, wiring._replay_cp_events(
+                    operator, cfg(), dispatcher.coordinator, dispatcher, home=home))
+            self.assertEqual(1, len(received))
+            self.assertEqual('pr.handler_repair_needed', received[0][0])
+            self.assertEqual('m__repo', received[0][1]['project'])
+            self.assertEqual(project.latest_event_id(),
+                             wiring._event_cursor(operator, 'm__repo'))
+        finally:
+            project.db.close()
+            operator.db.close()
+
+    def test_worker_task_completion_events_replay_once_from_machine_cursor(self):
+        from unittest import mock
+        from codeloop.cp.registry import Registry
+        home = tempfile.mkdtemp(prefix='op-worker-task-replay-')
+        registry_path = Path(home) / 'registry.sqlite'
+        registry = Registry(registry_path)
+        code = registry.create_enroll_code('worker-1', ['m__repo'])
+        enrolled = registry.enroll(code, 'test', '127.0.0.1')
+        operator = op_store.open_store(home)
+
+        class Coordinator:
+            def __init__(self):
+                self.registries = []
+
+            def exposed_keys(self):
+                return []
+
+            def registry(self):
+                current = Registry(registry_path)
+                self.registries.append(current)
+                return current
+
+        class Dispatcher:
+            def __init__(self):
+                self.coordinator = Coordinator()
+
+        dispatcher = Dispatcher()
+        try:
+            wiring._initialize_worker_task_cursors(operator, dispatcher.coordinator)
+            task, _ = registry.worker_tasks.enqueue(
+                'worker.project_diagnose', project='m__repo',
+                target_machine_id=enrolled['machine_id'],
+                payload={'loop': 'discover'}, source_event_id='stall:1', now=1000)
+            registry.worker_tasks.mark_dispatched(task['id'], enrolled['machine_id'], now=1001)
+            registry.worker_tasks.report(task['id'], enrolled['machine_id'], 'RUNNING', now=1002)
+            registry.worker_tasks.report(task['id'], enrolled['machine_id'], 'SUCCEEDED',
+                                         result={'summary': 'diagnosed'}, now=1003)
+            registry.close()
+            received = []
+            with mock.patch.object(
+                    wiring.op_ingest, 'ingest_event',
+                    side_effect=lambda _s, _c, kind, payload, **_kw:
+                    received.append((kind, payload)) or {'decision': 'task_result'}):
+                self.assertEqual(2, wiring._replay_worker_task_events(
+                    operator, cfg(), dispatcher.coordinator, dispatcher, home=home))
+                self.assertEqual(0, wiring._replay_worker_task_events(
+                    operator, cfg(), dispatcher.coordinator, dispatcher, home=home))
+            self.assertEqual(['worker.task.running', 'worker.task.succeeded'],
+                             [kind for kind, _ in received])
+            self.assertEqual('m__repo', received[-1][1]['project'])
+            self.assertEqual(received[-1][1]['event_id'],
+                             wiring._worker_task_event_cursor(
+                                 operator, enrolled['machine_id']))
+        finally:
+            try:
+                registry.close()
+            except Exception:
+                pass
+            for current in dispatcher.coordinator.registries:
+                current.close()
+            operator.db.close()
 
 
 class OperatorActCliTests(unittest.TestCase):

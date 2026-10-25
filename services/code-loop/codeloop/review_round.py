@@ -140,7 +140,10 @@ class RemoteCoordinator:
         self.worker.bind(claim['id'], claim['token'], worktree, branch)
 
     def abandon_quiet(self, execution, token):
-        pass   # no worker-side abandon: the short lease self-heals
+        try:
+            self.worker.abandon(execution, token)
+        except Exception:
+            pass   # lease sweep remains the recovery floor
 
 
 def remove_worktree_quietly(cp_cfg, path, git_fn=None):
@@ -318,6 +321,19 @@ def prepare_round(coordinator, cp_cfg, number, git_fn=None,
         remove_worktree_quietly(cp_cfg, worktree, git_fn)
         raise PrepareError(502, 'BIND_FAILED: %s: %s'
                            % (type(exc).__name__, exc)) from None
-    return {'execution': claim['id'], 'token': claim['token'],
-            'worktree': worktree, 'branch': branch,
-            'head_ref': pr['head']['ref'] if repair else None}
+    prepared = {'execution': claim['id'], 'token': claim['token'],
+                'worktree': worktree, 'branch': branch,
+                'head_ref': pr['head']['ref'] if repair else None,
+                'head_sha': pr['head']['sha'],
+                'base_ref': (pr.get('base') or {}).get('ref'),
+                'base_sha': None}
+    item = getattr(coordinator, '_item', None) or {}
+    try:
+        payload = json.loads(item.get('payload') or '{}')
+    except (TypeError, ValueError):
+        payload = {}
+    if repair:
+        prepared['task'] = payload.get('task')
+        prepared['repair_reasons'] = payload.get('repair_reasons') or []
+        prepared['base_sha'] = payload.get('base_sha')
+    return prepared

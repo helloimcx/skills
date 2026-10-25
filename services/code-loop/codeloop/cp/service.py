@@ -252,7 +252,13 @@ class Service(CommandLedgerMixin):
             resources += ['issue-%s' % n for n in linked[pr['number']]]
             signal = signals.get('review:%s' % pr['number'])
             if changes or pr.get('mergeable') is False:
+                repair_reasons = []
+                if changes:
+                    repair_reasons.append('changes_requested')
+                if pr.get('mergeable') is False:
+                    repair_reasons.append('merge_conflict')
                 payload['task'] = 'PR_REVIEW_FIX' if changes else 'PR_CONFLICT_RESOLUTION'
+                payload['repair_reasons'] = repair_reasons
                 add('repair:%s' % pr['number'], 'handler', payload, resources + ['path:*'], 20)
             elif gate_mod.attributed_stale(signal, pr):
                 # The red survived the rerun and pre-exists at the fork point
@@ -277,6 +283,113 @@ class Service(CommandLedgerMixin):
             raise ValueError('PROJECT_KEY_REQUIRED: observer store needs the project key')
         return key
 
+    @staticmethod
+    def _review_source_id(review):
+        review_id = review.get('id')
+        if review_id is None:
+            identity = {'user': (review.get('user') or {}).get('id'),
+                        'state': review.get('state'),
+                        'submitted_at': review.get('submitted_at'),
+                        'commit_id': review.get('commit_id'),
+                        'body_sha': hashlib.sha256(
+                            (review.get('body') or '').encode('utf-8')).hexdigest()}
+            review_id = hashlib.sha256(dump(identity).encode('utf-8')).hexdigest()
+        return 'github-review:%s' % review_id
+
+    def _repair_event_candidates(self, previous, snapshot, previous_synced_at):
+        """Return newly observed repair sources grouped by PR.
+
+        First observation establishes a baseline and deliberately emits no
+        historical PR work. Internal SENT reviewer operations are baselined
+        the same way through event_sources.
+        """
+        grouped = {}
+        outbox_sources_to_remember = []
+        project = self._project_key()
+        current = {pr['number']: pr for pr in snapshot.get('prs', [])}
+        old = {pr['number']: pr for pr in (previous or {}).get('prs', [])}
+
+        def eligible(pr):
+            return (pr.get('state') == 'open'
+                    and (pr.get('base') or {}).get('ref') == self.cfg['base']
+                    and not pr.get('draft'))
+
+        def add(number, reason, source_id):
+            entry = grouped.setdefault(number, {'reasons': set(), 'source_ids': set()})
+            entry['reasons'].add(reason)
+            entry['source_ids'].add(source_id)
+
+        if previous is not None:
+            for number, pr in current.items():
+                if not eligible(pr):
+                    continue
+                prior = old.get(number)
+                if prior is None:
+                    continue
+                prior_ids = {self._review_source_id(review)
+                             for review in prior.get('reviews', [])}
+                for review in pr.get('reviews', []):
+                    state = (review.get('state') or '').upper()
+                    source_id = self._review_source_id(review)
+                    if (source_id not in prior_ids and state in
+                            ('REQUEST_CHANGES', 'REQUESTED_CHANGES',
+                             'CHANGES_REQUESTED')):
+                        add(number, 'changes_requested', source_id)
+                head_changed_during_conflict = (
+                    prior.get('mergeable') is False
+                    and (((prior.get('head') or {}).get('sha')
+                          != (pr.get('head') or {}).get('sha'))
+                         or ((previous or {}).get('base_sha')
+                             != snapshot.get('base_sha'))))
+                if (pr.get('mergeable') is False
+                        and (prior.get('mergeable') is not False
+                             or head_changed_during_conflict)):
+                    edge = 'merge-conflict:%s:%s:%s:%s:%s' % (
+                        project, number, (pr.get('head') or {}).get('sha', ''),
+                        snapshot.get('base_sha', ''), repr(previous_synced_at))
+                    add(number, 'merge_conflict', edge)
+
+        for row in self.store.db.execute(
+                "SELECT id,payload FROM outbox WHERE action='review_comment' "
+                "AND state='SENT'"):
+            source_id = 'reviewer-verdict:%s' % row['id']
+            if self.store.event_source_seen(source_id):
+                continue
+            try:
+                body = json.loads(row['payload'])
+            except ValueError:
+                outbox_sources_to_remember.append(source_id)
+                continue
+            match = re.search(r'Decision: Changes requested', body.get('body') or '')
+            if match and previous is not None:
+                pr = current.get(body.get('number'))
+                if (pr and eligible(pr)
+                        and ('Head: ' + pr['head']['sha']) in body.get('body', '')):
+                    add(pr['number'], 'changes_requested', source_id)
+                    continue
+            # A SENT operation is immutable. Mark irrelevant decisions as
+            # observed too, so every sync does not rescan old approvals and
+            # validation failures forever.
+            outbox_sources_to_remember.append(source_id)
+
+        events = []
+        for number, entry in sorted(grouped.items()):
+            pr = current[number]
+            source_ids = sorted(entry['source_ids'])
+            event_key = hashlib.sha256(
+                (project + '|' + '|'.join(source_ids)).encode('utf-8')).hexdigest()
+            events.append({
+                'source_ids': source_ids,
+                'payload': {
+                    'kind': 'pr.handler_repair_needed', 'entity': 'pr:%s' % number,
+                    'source_event_id': 'pr-repair:' + event_key,
+                    'project': project, 'number': number,
+                    'head_sha': (pr.get('head') or {}).get('sha'),
+                    'base_ref': (pr.get('base') or {}).get('ref'),
+                    'base_sha': snapshot.get('base_sha'),
+                    'reasons': sorted(entry['reasons'])}})
+        return events, outbox_sources_to_remember
+
     def sync(self):
         try:
             # Facts come from the shared observer store (one crawl path for
@@ -293,7 +406,11 @@ class Service(CommandLedgerMixin):
             # the snapshot and its judged exam enter the store together.
             exam_record = exam.resolve(self.platform, self.meta('exam'), snapshot['base_sha'])
             self._repo_exam = exam.overlay(exam_record)
+            previous_snapshot = self.meta('snapshot')
+            previous_synced_at = self.meta('synced_at', 0)
             items = self.derive(snapshot)
+            repair_events, outbox_sources_to_remember = self._repair_event_candidates(
+                previous_snapshot, snapshot, previous_synced_at)
             with self.store.transaction():
                 # Escalation transition inside the write transaction: after N
                 # failed repairs the signature belongs to a human and stops
@@ -310,6 +427,12 @@ class Service(CommandLedgerMixin):
                 for key, kind, v, payload, resources, priority in items:
                     self._mint(key, kind, v, payload, resources, priority,
                                cooldowns, current)
+                for event in repair_events:
+                    self.store.event_with_sources(
+                        'pr.handler_repair_needed', event['payload'],
+                        event['source_ids'])
+                for source_id in outbox_sources_to_remember:
+                    self.store.remember_event_source(source_id)
                 for old in self.store.items():
                     if old['state'] == 'READY' and current.get(old['key']) != old['version']:
                         self.store.db.execute("UPDATE work_items SET state='CANCELLED' WHERE id=?", (old['id'],))
@@ -330,6 +453,111 @@ class Service(CommandLedgerMixin):
             self.store.event('sync.failed', {'error': type(exc).__name__,
                                              'detail': str(exc)[:200]})
             raise
+
+    def evaluate_worker_stalls(self, machines, threshold=64800, now=None):
+        """Persist machine/project discover stall and recovery edges.
+
+        ``machines`` is the fresh registry projection for this project's
+        grants. A worker with no prior discover claim is not called stalled;
+        there is no schedule history to distinguish a new install from a
+        missed run.
+        """
+        if not isinstance(threshold, (int, float)) or isinstance(threshold, bool) \
+                or threshold <= 0:
+            raise ValueError('WORKER_STALL_THRESHOLD_INVALID')
+        now = time.time() if now is None else now
+        project = self._project_key()
+        last_by_machine = {}
+        rows = self.store.db.execute(
+            "SELECT e.id,e.worker,e.created_at,e.state,e.expires_at "
+            "FROM executions e JOIN work_items w ON w.id=e.item_id "
+            "WHERE w.kind='discover' ORDER BY e.created_at,e.id").fetchall()
+        for row in rows:
+            worker = row['worker'] or ''
+            name = worker.split('/', 1)[0]
+            try:
+                created = float(row['created_at'])
+            except (TypeError, ValueError):
+                continue
+            current = last_by_machine.get(name)
+            if current is None or (created, row['id']) > (current['created_at'], current['id']):
+                last_by_machine[name] = dict(row, created_at=created)
+
+        previous = self.meta('worker_stalls') or {}
+        current_state = {}
+        events = []
+        known_keys = set()
+        for machine in machines or []:
+            machine_id, name = machine.get('id'), machine.get('name')
+            if not machine_id or not name:
+                continue
+            key = '%s|discover' % machine_id
+            known_keys.add(key)
+            prior = previous.get(key)
+            execution = last_by_machine.get(name)
+            eligible = (bool(machine.get('enabled')) and not machine.get('revoked')
+                        and bool(machine.get('granted')))
+            age = max(0.0, now - execution['created_at']) if execution else None
+            stalled = bool(eligible and execution and age > threshold)
+            if stalled:
+                source_id = 'worker-stall:%s:%s:discover:%s' % (
+                    machine_id, project, execution['id'])
+                state = {'machine_id': machine_id, 'machine': name,
+                         'project': project, 'loop': 'discover',
+                         'last_execution_id': execution['id'],
+                         'last_activity': execution['created_at'],
+                         'source_id': source_id}
+                current_state[key] = state
+                if prior is None or prior.get('last_execution_id') != execution['id']:
+                    payload = dict(state, kind='worker.loop_stalled',
+                                   entity='worker:%s:discover' % machine_id,
+                                   age_seconds=age, threshold_seconds=threshold,
+                                   execution_state=execution['state'])
+                    payload['source_event_id'] = 'worker-stall:' + hashlib.sha256(
+                        source_id.encode('utf-8')).hexdigest()
+                    events.append(('worker.loop_stalled', payload, [source_id]))
+            elif prior is not None:
+                resolution = 'worker-stall-resolved:%s:%s:discover:%s:%s' % (
+                    machine_id, project, prior.get('last_execution_id'),
+                    execution['id'] if execution else 'unobserved')
+                payload = {'kind': 'worker.loop_resolved',
+                           'entity': 'worker:%s:discover' % machine_id,
+                           'source_event_id': 'worker-stall-resolved:' + hashlib.sha256(
+                               resolution.encode('utf-8')).hexdigest(),
+                           'machine_id': machine_id, 'machine': name,
+                           'project': project, 'loop': 'discover',
+                           'last_execution_id': execution['id'] if execution else None,
+                           'age_seconds': age, 'threshold_seconds': threshold,
+                           'reason': ('within_threshold' if eligible
+                                      else 'machine_or_project_not_dispatchable')}
+                events.append(('worker.loop_resolved', payload, [resolution]))
+
+        # A removed/revoked machine is still resolved even if it no longer
+        # appears in the current grant projection.
+        for key, prior in previous.items():
+            if key in known_keys:
+                continue
+            machine_id = prior.get('machine_id')
+            source_id = 'worker-stall-resolved:%s:%s:discover:%s:unregistered' % (
+                machine_id, project, prior.get('last_execution_id'))
+            payload = {'kind': 'worker.loop_resolved',
+                       'entity': 'worker:%s:discover' % machine_id,
+                       'source_event_id': 'worker-stall-resolved:' + hashlib.sha256(
+                           source_id.encode('utf-8')).hexdigest(),
+                       'machine_id': machine_id, 'machine': prior.get('machine'),
+                       'project': project, 'loop': 'discover',
+                       'last_execution_id': prior.get('last_execution_id'),
+                       'age_seconds': None, 'threshold_seconds': threshold,
+                       'reason': 'machine_or_project_not_registered'}
+            events.append(('worker.loop_resolved', payload, [source_id]))
+
+        with self.store.transaction():
+            for kind, payload, source_ids in events:
+                self.store.event_with_sources(kind, payload, source_ids)
+            self.set_meta('worker_stalls', current_state)
+        return {'stalled': sum(1 for value in current_state.values()
+                               if value.get('source_id')),
+                'events': len(events)}
 
     def claim(self, loop, worker=None, item_id=None, ttl=None):
         # No registry names this machine in the in-process personality, so an

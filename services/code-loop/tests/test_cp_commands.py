@@ -470,10 +470,38 @@ class DispatcherTests(unittest.TestCase):
         else:
             os.environ['CODE_LOOP_HOME'] = self._home
 
-    def connect(self, fail=False):
+    def connect(self, fail=False, registrations=('a__b',),
+                task_schema_versions=(1,)):
         conn = FakeConnection(fail=fail)
         self.coordinator.dispatcher.register(self.machine, conn)
+        if registrations is not None:
+            self.coordinator.dispatcher.hello(
+                self.machine, list(registrations),
+                task_schema_versions=list(task_schema_versions))
         return conn
+
+    def test_enqueue_worker_task_keeps_offline_work_pending_then_dispatches(self):
+        result = self.coordinator.dispatcher.enqueue_worker_task(
+            'pr.repair', project='a__b', payload={'number': 88},
+            source_event_id='pr-repair:source-1', dedupe_key='pr:a__b:88',
+            now=1000.0)
+        self.assertTrue(result['created'])
+        self.assertEqual(0, result['dispatched'])
+        self.assertEqual('PENDING', result['task']['state'])
+
+        conn = self.connect()
+        catchup = self.coordinator.dispatcher.dispatch_worker_tasks(
+            machine_id=self.machine['id'], now=1001.0)
+        self.assertEqual(1, catchup)
+        self.assertEqual('worker_task', conn.sent[0]['command']['action'])
+        self.assertEqual('pr.repair', conn.sent[0]['command']['task']['task_type'])
+
+        replay = self.coordinator.dispatcher.enqueue_worker_task(
+            'pr.repair', project='a__b', payload={'number': 88},
+            source_event_id='pr-repair:source-1', dedupe_key='pr:a__b:88',
+            now=1002.0)
+        self.assertFalse(replay['created'])
+        self.assertEqual(result['task']['id'], replay['task']['id'])
 
     def test_dispatch_pushes_pending_to_the_connected_machine(self):
         self.service.enqueue_command('review_round', 88, now=1000.0)
@@ -615,6 +643,133 @@ class DispatcherTests(unittest.TestCase):
             machine_id=self.machine['id'], now=1000.0)
         self.assertEqual(1, dispatched)
         self.assertEqual(1, len(conn.sent))
+
+    def test_machine_task_dispatches_a_typed_frame_to_its_project_grant(self):
+        task, created = self.registry.worker_tasks.enqueue(
+            'worker.project_diagnose', project='a__b',
+            payload={'loop': 'discover'},
+            allowed_actions=['discover.run_once'],
+            source_event_id='stall:a__b:discover:1', now=1000.0)
+        self.assertTrue(created)
+        conn = self.connect()
+        self.assertEqual(1, self.coordinator.dispatcher.dispatch_worker_tasks(
+            now=1000.0))
+        sent = conn.sent[0]
+        self.assertEqual('command', sent['type'])
+        self.assertEqual('worker_task', sent['command']['action'])
+        self.assertEqual({
+            'id': task['id'], 'schema_version': 1,
+            'task_type': 'worker.project_diagnose', 'project': 'a__b',
+            'target_machine_id': self.machine['id'],
+            'payload': {'loop': 'discover'},
+            'allowed_actions': ['discover.run_once'],
+            'expires_at': task['expires_at'],
+            'source_event_id': 'stall:a__b:discover:1'},
+            sent['command']['task'])
+        current = self.registry.worker_tasks.get(task['id'])
+        self.assertEqual(('CLAIMED', self.machine['id']),
+                         (current['state'], current['claimed_by']))
+
+    def test_legacy_worker_without_task_schema_keeps_task_pending(self):
+        task, _ = self.registry.worker_tasks.enqueue(
+            'pr.repair', project='a__b', payload={'number': 88},
+            source_event_id='pr:legacy-worker')
+        conn = FakeConnection()
+        self.coordinator.dispatcher.register(self.machine, conn)
+        self.coordinator.dispatcher.hello(self.machine, ['a__b'])
+
+        self.assertEqual(0, self.coordinator.dispatcher.dispatch_worker_tasks())
+        self.assertEqual([], conn.sent)
+        self.assertEqual('PENDING', self.registry.worker_tasks.get(task['id'])['state'])
+
+    def test_worker_receives_only_task_schemas_it_announced(self):
+        task, _ = self.registry.worker_tasks.enqueue(
+            'pr.repair', project='a__b', payload={'number': 88},
+            source_event_id='pr:schema-v2')
+        conn = self.connect(task_schema_versions=[2])
+
+        self.assertEqual(0, self.coordinator.dispatcher.dispatch_worker_tasks())
+        self.assertEqual([], conn.sent)
+        self.assertEqual('PENDING', self.registry.worker_tasks.get(task['id'])['state'])
+
+    def test_project_task_waits_for_local_registration_even_when_granted(self):
+        task, _ = self.registry.worker_tasks.enqueue(
+            'pr.repair', project='a__b', payload={'number': 88},
+            source_event_id='pr:registration-required', now=1000.0)
+        conn = self.connect(registrations=[])  # no local checkout is announced
+        self.assertEqual(0, self.coordinator.dispatcher.dispatch_worker_tasks(
+            now=1000.0))
+        self.assertEqual([], conn.sent)
+        self.assertEqual('PENDING', self.registry.worker_tasks.get(task['id'])['state'])
+
+        self.coordinator.dispatcher.hello(self.machine, ['a__b'],
+                                          task_schema_versions=[1])
+        self.assertEqual(1, self.coordinator.dispatcher.dispatch_worker_tasks(
+            now=1001.0))
+        self.assertEqual('CLAIMED', self.registry.worker_tasks.get(task['id'])['state'])
+
+    def test_expired_offline_task_requeues_after_ws_hello(self):
+        from codeloop.cp.server import WsConnection
+        class RecordingWsConnection(WsConnection):
+            def __init__(self, machine, dispatcher):
+                super().__init__(None, machine, dispatcher)
+                self.sent = []
+
+            def send_json(self, payload):
+                self.sent.append(payload)
+
+        task, _ = self.registry.worker_tasks.enqueue(
+            'pr.repair', project='a__b', payload={'number': 88},
+            source_event_id='pr:offline-expired', ttl=10, now=1000.0)
+        self.registry.worker_tasks.sweep(now=1011.0)
+        self.assertEqual('EXPIRED', self.registry.worker_tasks.get(task['id'])['state'])
+
+        conn = RecordingWsConnection(self.machine, self.coordinator.dispatcher)
+        self.coordinator.dispatcher.register(self.machine, conn)
+        conn._handle_text(json.dumps(
+            {'type': 'hello', 'registrations': ['a__b'],
+             'task_schema_versions': [1]}).encode('utf-8'))
+
+        current = self.registry.worker_tasks.get(task['id'])
+        self.assertEqual('CLAIMED', current['state'])
+        self.assertEqual(self.machine['id'], current['claimed_by'])
+        self.assertEqual(task['id'], conn.sent[0]['command']['task']['id'])
+
+    def test_expired_offline_task_waits_for_compatible_worker(self):
+        task, _ = self.registry.worker_tasks.enqueue(
+            'pr.repair', project='a__b', payload={'number': 89},
+            source_event_id='pr:legacy-expired', ttl=10, now=1000.0)
+        self.registry.worker_tasks.sweep(now=1011.0)
+        conn = self.connect(task_schema_versions=[])
+
+        self.assertEqual(0, self.coordinator.dispatcher.dispatch_worker_tasks(
+            machine_id=self.machine['id']))
+        self.assertEqual([], conn.sent)
+        self.assertEqual('EXPIRED',
+                         self.registry.worker_tasks.get(task['id'])['state'])
+
+    def test_project_task_waits_for_authorized_machine_and_reverts_on_send_failure(self):
+        task, _ = self.registry.worker_tasks.enqueue(
+            'pr.repair', project='a__b', payload={'number': 88},
+            source_event_id='pr:a__b:88:head-1', now=1000.0)
+        dead = self.connect(fail=True)
+        self.assertEqual(0, self.coordinator.dispatcher.dispatch_worker_tasks(
+            now=1000.0))
+        current = self.registry.worker_tasks.get(task['id'])
+        self.assertEqual('PENDING', current['state'])
+        self.assertIsNone(current['claimed_by'])
+        self.assertTrue(dead.closed)
+
+    def test_machine_task_with_project_does_not_dispatch_without_grant(self):
+        task, _ = self.registry.worker_tasks.enqueue(
+            'worker.project_diagnose', target_machine_id=self.machine['id'],
+            project='other__repo', payload={'loop': 'discover'},
+            source_event_id='stall:other__repo:discover:1', now=1000.0)
+        conn = self.connect()
+        self.assertEqual(0, self.coordinator.dispatcher.dispatch_worker_tasks(
+            now=1000.0))
+        self.assertEqual([], conn.sent)
+        self.assertEqual('PENDING', self.registry.worker_tasks.get(task['id'])['state'])
 
 
 class RepairTickTests(unittest.TestCase):
@@ -781,8 +936,8 @@ class HelloPreflightTests(unittest.TestCase):
     def test_ws_text_hello_frame_reaches_the_dispatcher(self):
         from codeloop.cp.server import WsConnection
         d = self.coordinator.dispatcher
-        d.register(self.machine, FakeConnection())
         conn = WsConnection(None, self.machine, d)
+        d.register(self.machine, conn)
         conn._handle_text(json.dumps(
             {'type': 'hello', 'registrations': ['a__b']}).encode('utf-8'))
         self.assertEqual(['agent-box'], d.registrations(['a__b'])['a__b']['registered'])

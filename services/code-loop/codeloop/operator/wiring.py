@@ -28,33 +28,231 @@ _PROJECT_KEY_RE = re.compile(r'[A-Za-z0-9_.\-]+__[A-Za-z0-9_.\-]+')
 
 def make_event_sink(op_cfg, feed):
     """Store.event on_event callback: enqueue matching kinds only. Runs inside
-    the writer's transaction — queue.put only, never I/O, never raising."""
+    the writer's transaction — a wakeup only, never ingesting an uncommitted
+    event or performing I/O."""
     kinds = tuple(op_cfg['event_kinds'])
 
     def sink(kind, payload):
         if kind.startswith(face.SELF_PREFIX):
             return
         if kind in kinds or kind.startswith('exam.'):
-            feed.put((kind, payload or {}, time.time()))
+            feed.put(('operator.cp.wakeup', {
+                'project': (payload or {}).get('project')}, time.time()))
 
     return sink
+
+
+def _ingest_event_safely(op_store, op_cfg, event, dispatcher, home=None):
+    """Process one event already removed from the feed through the ingest gate."""
+    kind, payload, _ = event
+    payload = payload or {}
+    if kind in ('worker.task.wakeup', 'operator.cp.wakeup'):
+        # CP and task results live in durable event logs. Callbacks only wake
+        # this consumer; ordered replay owns ingestion and cursor movement.
+        return True
+    event_id = payload.get('event_id')
+    project = payload.get('project', '')
+    if kind in ('worker.task.succeeded', 'worker.task.failed'):
+        machine_id = payload.get('machine_id')
+        try:
+            task_event_id = int(event_id) if event_id is not None else None
+        except (TypeError, ValueError):
+            task_event_id = None
+        if (machine_id and task_event_id is not None
+                and task_event_id <= _worker_task_event_cursor(op_store, machine_id)):
+            return True
+    try:
+        decision = op_ingest.ingest_event(
+            op_store, op_cfg, kind, payload, project=project,
+            dispatcher=dispatcher, event_id=event_id, home=home)
+        if decision.get('decision') == 'fired' and not decision.get('task'):
+            dispatcher.dispatch_operator()
+    except Exception as exc:
+        print('codeloop: operator ingest failed for %s: %s' % (kind, exc),
+              flush=True)
+        return False
+    if kind in ('worker.task.succeeded', 'worker.task.failed'):
+        if payload.get('machine_id') and event_id is not None:
+            _advance_worker_task_event_cursor(
+                op_store, payload['machine_id'], event_id)
+    elif event_id is not None and project:
+        _advance_event_cursor(op_store, project, event_id)
+    return True
 
 
 def ingest_event_safely(op_store, op_cfg, feed, dispatcher, home=None):
     """Drain one queued event through the gate; fired → dispatch now. A gate
     failure is logged and dropped loudly — the sink must never break CP."""
     try:
-        kind, payload, _ = feed.get_nowait()
+        event = feed.get_nowait()
     except queue.Empty:
         return False
+    return _ingest_event_safely(op_store, op_cfg, event, dispatcher, home=home)
+
+
+def _event_cursor_key(project):
+    return 'operator_cp_event_cursor:' + project
+
+
+def _meta_set(store, key, value):
+    store.db.execute('INSERT INTO meta (key,value) VALUES (?,?) '
+                     'ON CONFLICT(key) DO UPDATE SET value=excluded.value',
+                     (key, str(value)))
+
+
+def _event_cursor(store, project, default=0):
+    row = store.db.execute('SELECT value FROM meta WHERE key=?',
+                           (_event_cursor_key(project),)).fetchone()
+    if row is None:
+        return default
     try:
-        decision = op_ingest.ingest_event(op_store, op_cfg, kind, payload)
-        if decision.get('decision') == 'fired':
-            dispatcher.dispatch_operator()
+        return max(0, int(row['value']))
+    except (TypeError, ValueError):
+        return default
+
+
+def _advance_event_cursor(store, project, event_id):
+    try:
+        event_id = int(event_id)
+    except (TypeError, ValueError):
+        return
+    current = _event_cursor(store, project)
+    if event_id <= current:
+        return
+    _meta_set(store, _event_cursor_key(project), event_id)
+
+
+def _worker_task_cursor_key(machine_id):
+    return 'operator_worker_task_cursor:' + machine_id
+
+
+def _worker_task_event_cursor(store, machine_id, default=0):
+    row = store.db.execute('SELECT value FROM meta WHERE key=?',
+                           (_worker_task_cursor_key(machine_id),)).fetchone()
+    if row is None:
+        return default
+    try:
+        return max(0, int(row['value']))
+    except (TypeError, ValueError):
+        return default
+
+
+def _advance_worker_task_event_cursor(store, machine_id, event_id):
+    try:
+        event_id = int(event_id)
+    except (TypeError, ValueError):
+        return
+    if event_id > _worker_task_event_cursor(store, machine_id):
+        _meta_set(store, _worker_task_cursor_key(machine_id), event_id)
+
+
+def _initialize_event_cursors(store, coordinator):
+    """Start at each project's current tail once, then replay from there.
+
+    This avoids backfilling old project events when Operator is first enabled.
+    Events committed after the cursor snapshot are delivered through the sink
+    queue and remain above the persisted cursor for restart recovery.
+    """
+    for project in coordinator.exposed_keys():
+        if store.db.execute('SELECT 1 FROM meta WHERE key=?',
+                            (_event_cursor_key(project),)).fetchone():
+            continue
+        service = None
+        try:
+            service = coordinator.service_for(project)
+            _meta_set(store, _event_cursor_key(project),
+                      service.store.latest_event_id())
+        except Exception as exc:
+            print('codeloop: operator event cursor init failed for %s: %s'
+                  % (project, exc), flush=True)
+        finally:
+            if service is not None:
+                service.store.db.close()
+
+
+def _initialize_worker_task_cursors(store, coordinator):
+    registry = None
+    try:
+        registry = coordinator.registry()
+        for machine in registry.list_machines():
+            machine_id = machine['id']
+            if store.db.execute('SELECT 1 FROM meta WHERE key=?',
+                                (_worker_task_cursor_key(machine_id),)).fetchone():
+                continue
+            row = registry.db.execute(
+                'SELECT coalesce(max(id),0) FROM worker_task_events WHERE machine_id=?',
+                (machine_id,)).fetchone()
+            _meta_set(store, _worker_task_cursor_key(machine_id), row[0] or 0)
     except Exception as exc:
-        print('codeloop: operator ingest failed for %s: %s' % (kind, exc),
+        print('codeloop: operator worker task cursor init failed: %s' % exc,
               flush=True)
-    return True
+    finally:
+        if registry is not None:
+            registry.close()
+
+
+def _replay_worker_task_events(op_store_conn, op_cfg, coordinator,
+                               dispatcher, home=None, page_size=500):
+    registry = None
+    processed = 0
+    try:
+        registry = coordinator.registry()
+        machines = registry.list_machines()
+        for machine in machines:
+            machine_id = machine['id']
+            while True:
+                cursor = _worker_task_event_cursor(op_store_conn, machine_id)
+                events = registry.worker_tasks.events_after(
+                    machine_id, cursor, limit=page_size)
+                if not events:
+                    break
+                for row in events:
+                    payload = dict(row['payload'] or {}, event_id=row['id'],
+                                   machine_id=machine_id)
+                    if not _ingest_event_safely(
+                            op_store_conn, op_cfg,
+                            (row['kind'], payload, row['created_at']),
+                            dispatcher, home=home):
+                        return processed
+                    processed += 1
+    except Exception as exc:
+        print('codeloop: operator worker task event replay failed: %s' % exc,
+              flush=True)
+    finally:
+        if registry is not None:
+            registry.close()
+    return processed
+
+
+def _replay_cp_events(op_store_conn, op_cfg, coordinator, dispatcher, home=None,
+                      page_size=500):
+    """Drain project event rows after durable per-project cursors."""
+    processed = 0
+    for project in coordinator.exposed_keys():
+        service = None
+        try:
+            service = coordinator.service_for(project)
+            while True:
+                cursor = _event_cursor(op_store_conn, project)
+                events = service.store.events_after(cursor, limit=page_size)
+                if not events:
+                    break
+                for row in events:
+                    payload = dict(row['payload'] or {}, project=project,
+                                   event_id=row['id'])
+                    if not _ingest_event_safely(
+                            op_store_conn, op_cfg,
+                            (row['kind'], payload, row['created_at']),
+                            dispatcher, home=home):
+                        return processed
+                    processed += 1
+        except Exception as exc:
+            print('codeloop: operator event replay failed for %s: %s'
+                  % (project, exc), flush=True)
+        finally:
+            if service is not None:
+                service.store.db.close()
+    return processed
 
 
 def _github(args):
@@ -232,9 +430,24 @@ def start_consumer(op_store_conn, op_cfg, dispatcher, watchdog_log, dash_db=None
     watchdog-cursor ingest. No state is re-derived anywhere."""
     feed = queue.Queue()
     coordinator_sink = make_event_sink(op_cfg, feed)
+    coordinator = getattr(dispatcher, 'coordinator', None)
+    if coordinator is not None:
+        _initialize_event_cursors(op_store_conn, coordinator)
+        _initialize_worker_task_cursors(op_store_conn, coordinator)
+        # Install before starting the replay loop so every later event is
+        # either queued immediately or found past the durable cursor.
+        coordinator.event_sink = coordinator_sink
+        coordinator.worker_task_sink = lambda _kind, payload: feed.put(
+            ('worker.task.wakeup', {
+                'machine_id': (payload or {}).get('machine_id')}, time.time()))
 
     def loop():
         while True:
+            if coordinator is not None:
+                _replay_cp_events(op_store_conn, op_cfg, coordinator,
+                                  dispatcher, home=home)
+                _replay_worker_task_events(op_store_conn, op_cfg, coordinator,
+                                           dispatcher, home=home)
             served = True
             while served:
                 served = ingest_event_safely(op_store_conn, op_cfg, feed,
@@ -278,9 +491,15 @@ def start_consumer(op_store_conn, op_cfg, dispatcher, watchdog_log, dash_db=None
                 print('codeloop: operator watchdog ingest failed: %s' % exc,
                       flush=True)
             try:
-                feed.get(timeout=DRAIN_TIMEOUT_SECONDS)   # next event, or floor tick
+                # The blocking read removes the event from Queue. Process it
+                # here instead of discarding it and leaving nothing for the
+                # next non-blocking drain above.
+                event = feed.get(timeout=DRAIN_TIMEOUT_SECONDS)
             except queue.Empty:
                 pass
+            else:
+                _ingest_event_safely(op_store_conn, op_cfg, event, dispatcher,
+                                     home=home)
 
     thread = threading.Thread(target=loop, daemon=True)
     thread.start()

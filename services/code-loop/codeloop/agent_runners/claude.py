@@ -19,6 +19,14 @@ class ClaudeRunner(base.Runner):
     label = 'claude'
     sub = 'Claude Code'
     models_command = None
+    supports_subagents = True
+
+    def coordinator_flags(self, task_type=None):
+        if task_type == 'pr.repair':
+            return ['--tools', 'Task', '--output-format', 'stream-json', '--verbose']
+        if task_type == 'worker.project_diagnose':
+            return ['--tools', 'Read,Glob,Grep']
+        raise ValueError('TASK_TYPE_UNKNOWN: %s' % task_type)
 
     def argv(self, model=None, which_fn=None, run_fn=None):
         if model is not None:

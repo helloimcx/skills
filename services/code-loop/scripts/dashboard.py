@@ -41,7 +41,8 @@ def load_config(path):
 
 
 def register_trigger(db, project, repo=None, entry_doc=None, rules_doc=None,
-                     command=None, listing=False):
+                     command=None, coordinator_agent=None,
+                     coordinator_model=None, listing=False):
     """Register or edit one project's manual review-trigger facts on the
     projects table (see store.set_project_trigger). Repeatable: provided
     flags update, omitted keys keep their stored value; first registration
@@ -51,16 +52,19 @@ def register_trigger(db, project, repo=None, entry_doc=None, rules_doc=None,
     if listing:
         rows = db.execute(
             'SELECT org_repo, enabled, repo_cwd, entry_doc, rules_doc, '
-            'spawn_command FROM projects ORDER BY org_repo').fetchall()
+            'spawn_command,coordinator_agent,coordinator_model '
+            'FROM projects ORDER BY org_repo').fetchall()
         if not rows:
             return 0, 'no projects known to the dashboard yet'
         lines = []
         for r in rows:
             lines.append('%s  (enabled=%s)\n  repo_cwd=%s\n  entry_doc=%s\n'
-                         '  rules_doc=%s\n  command=%s'
+                         '  rules_doc=%s\n  command=%s\n  coordinator=%s model=%s'
                          % (r['org_repo'], bool(r['enabled']),
                             r['repo_cwd'] or '—', r['entry_doc'] or '—',
-                            r['rules_doc'] or '—', r['spawn_command'] or '—'))
+                            r['rules_doc'] or '—', r['spawn_command'] or '—',
+                            r['coordinator_agent'] or '—',
+                            r['coordinator_model'] or 'default'))
         return 0, '\n'.join(lines)
 
     fields = {}
@@ -78,11 +82,17 @@ def register_trigger(db, project, repo=None, entry_doc=None, rules_doc=None,
         if not all(argv):
             return 1, 'COMMAND_INVALID: empty argv part'
         fields['spawn_command'] = argv
+    if coordinator_agent is not None:
+        fields['coordinator_agent'] = coordinator_agent
+    if coordinator_model is not None:
+        fields['coordinator_model'] = coordinator_model
 
-    row = db.execute('SELECT repo_cwd, entry_doc, rules_doc, spawn_command '
+    row = db.execute('SELECT repo_cwd, entry_doc, rules_doc, spawn_command, '
+                     'coordinator_agent,coordinator_model '
                      'FROM projects WHERE org_repo=?', (project,)).fetchone()
     current = {k: (row[k] if row is not None else None) for k in
-               ('repo_cwd', 'entry_doc', 'rules_doc', 'spawn_command')}
+               ('repo_cwd', 'entry_doc', 'rules_doc', 'spawn_command',
+                'coordinator_agent', 'coordinator_model')}
     repo_cwd = fields.get('repo_cwd') or current['repo_cwd']
     if not repo_cwd:
         return 1, 'REPO_REQUIRED: --repo is required for the first registration'
@@ -99,12 +109,18 @@ def register_trigger(db, project, repo=None, entry_doc=None, rules_doc=None,
             fields['rules_doc'] = str(derived)
     if 'spawn_command' not in fields and not current['spawn_command']:
         fields['spawn_command'] = list(trigger.DEFAULT_COMMAND)
-    store.set_project_trigger(db, project, **fields)
-    row = db.execute('SELECT repo_cwd, entry_doc, rules_doc, spawn_command '
+    try:
+        store.set_project_trigger(db, project, **fields)
+    except ValueError as exc:
+        return 1, str(exc)
+    row = db.execute('SELECT repo_cwd, entry_doc, rules_doc, spawn_command, '
+                     'coordinator_agent,coordinator_model '
                      'FROM projects WHERE org_repo=?', (project,)).fetchone()
     return 0, ('registered %s\n  repo_cwd=%s\n  entry_doc=%s\n  rules_doc=%s\n'
-               '  command=%s' % (project, row['repo_cwd'], row['entry_doc'],
-                                 row['rules_doc'], row['spawn_command']))
+               '  command=%s\n  coordinator=%s model=%s'
+               % (project, row['repo_cwd'], row['entry_doc'], row['rules_doc'],
+                  row['spawn_command'], row['coordinator_agent'] or '—',
+                  row['coordinator_model'] or 'default'))
 
 
 def _open_operator_store(op_cfg):
@@ -151,6 +167,10 @@ def main(argv=None):
     p_reg.add_argument('--command', dest='spawn_argv',
                        help='spawn argv, comma-separated '
                        '(default: claude,-p,--dangerously-skip-permissions)')
+    p_reg.add_argument('--coordinator-agent',
+                       help='worker-local coordinator runtime id (claude/opencode)')
+    p_reg.add_argument('--coordinator-model',
+                       help='provider/model for Coordinator and child agent')
     p_reg.add_argument('--list', action='store_true', help='show registrations')
     p_reg.add_argument('--db', default=str(collect.DEFAULT_DB))
 
@@ -192,7 +212,9 @@ def main(argv=None):
         try:
             code, message = register_trigger(
                 db, args.project or '', repo=args.repo, entry_doc=args.entry_doc,
-                rules_doc=args.rules_doc, command=args.spawn_argv, listing=args.list)
+                rules_doc=args.rules_doc, command=args.spawn_argv,
+                coordinator_agent=args.coordinator_agent,
+                coordinator_model=args.coordinator_model, listing=args.list)
         finally:
             db.close()
         print(message)
