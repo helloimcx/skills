@@ -40,13 +40,9 @@ def make_event_sink(op_cfg, feed):
     return sink
 
 
-def ingest_event_safely(op_store, op_cfg, feed, dispatcher, home=None):
-    """Drain one queued event through the gate; fired → dispatch now. A gate
-    failure is logged and dropped loudly — the sink must never break CP."""
-    try:
-        kind, payload, _ = feed.get_nowait()
-    except queue.Empty:
-        return False
+def _ingest_event_safely(op_store, op_cfg, event, dispatcher, home=None):
+    """Process one event already removed from the feed through the ingest gate."""
+    kind, payload, _ = event
     try:
         decision = op_ingest.ingest_event(op_store, op_cfg, kind, payload)
         if decision.get('decision') == 'fired':
@@ -55,6 +51,16 @@ def ingest_event_safely(op_store, op_cfg, feed, dispatcher, home=None):
         print('codeloop: operator ingest failed for %s: %s' % (kind, exc),
               flush=True)
     return True
+
+
+def ingest_event_safely(op_store, op_cfg, feed, dispatcher, home=None):
+    """Drain one queued event through the gate; fired → dispatch now. A gate
+    failure is logged and dropped loudly — the sink must never break CP."""
+    try:
+        event = feed.get_nowait()
+    except queue.Empty:
+        return False
+    return _ingest_event_safely(op_store, op_cfg, event, dispatcher, home=home)
 
 
 def _github(args):
@@ -278,9 +284,15 @@ def start_consumer(op_store_conn, op_cfg, dispatcher, watchdog_log, dash_db=None
                 print('codeloop: operator watchdog ingest failed: %s' % exc,
                       flush=True)
             try:
-                feed.get(timeout=DRAIN_TIMEOUT_SECONDS)   # next event, or floor tick
+                # The blocking read removes the event from Queue. Process it
+                # here instead of discarding it and leaving nothing for the
+                # next non-blocking drain above.
+                event = feed.get(timeout=DRAIN_TIMEOUT_SECONDS)
             except queue.Empty:
                 pass
+            else:
+                _ingest_event_safely(op_store_conn, op_cfg, event, dispatcher,
+                                     home=home)
 
     thread = threading.Thread(target=loop, daemon=True)
     thread.start()

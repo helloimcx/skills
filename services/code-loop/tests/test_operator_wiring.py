@@ -8,6 +8,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest import mock
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 from urllib.error import HTTPError
@@ -266,6 +267,76 @@ class EventSinkTests(unittest.TestCase):
             self.assertEqual(kind, 'sync.failed')
         finally:
             store.db.close()
+
+
+class OperatorConsumerTests(unittest.TestCase):
+    def test_event_received_while_waiting_is_processed(self):
+        """A blocking queue read must hand its event to the normal ingest gate."""
+        import queue
+
+        class StopConsumer(Exception):
+            pass
+
+        class Feed:
+            def __init__(self):
+                self.waits = 0
+
+            def get_nowait(self):
+                raise queue.Empty
+
+            def get(self, timeout=None):
+                self.waits += 1
+                if self.waits == 1:
+                    return ('sync.failed', {'entity': 'test'}, time.time())
+                if self.waits == 2:
+                    raise queue.Empty
+                raise StopConsumer
+
+        class InlineThread:
+            def __init__(self, target, daemon):
+                self.target = target
+
+            def start(self):
+                self.target()
+
+        class Store:
+            def __init__(self):
+                self.sweeps = 0
+
+            def sweep_commands(self):
+                self.sweeps += 1
+
+        class Dispatcher:
+            def __init__(self):
+                self.events = []
+
+            def dispatch_operator(self):
+                self.events.append('dispatch')
+
+        feed = Feed()
+        store = Store()
+        dispatcher = Dispatcher()
+        received = []
+
+        def ingest(_store, _cfg, kind, payload):
+            received.append((kind, payload))
+            dispatcher.events.append('ingest:' + kind)
+            return {'decision': 'fired'}
+
+        with mock.patch.object(wiring.queue, 'Queue', return_value=feed), \
+                mock.patch.object(wiring.threading, 'Thread', InlineThread), \
+                mock.patch.object(wiring.op_ingest, 'ingest_event',
+                                  side_effect=ingest), \
+                mock.patch.object(wiring.op_store, 'recycle_wedged_rounds'), \
+                mock.patch.object(wiring.op_store, 'drain_obsolete_readys'), \
+                mock.patch.object(wiring.op_ingest, 'ingest_watchdog'):
+            with self.assertRaises(StopConsumer):
+                wiring.start_consumer(store, cfg(), dispatcher, 'unused')
+
+        self.assertEqual(received, [('sync.failed', {'entity': 'test'})])
+        self.assertEqual(dispatcher.events[:3],
+                         ['dispatch', 'ingest:sync.failed', 'dispatch'])
+        self.assertEqual(store.sweeps, 3)
 
 
 class ExecutorTests(unittest.TestCase):
