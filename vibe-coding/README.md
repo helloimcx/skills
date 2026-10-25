@@ -13,7 +13,7 @@
 - 所有任务（包括简单任务）在方案设计前创建或复用独立 Git worktree，开发与验证均在其中完成；新建任务默认从最新 `origin/main` 或 `origin/master` 创建任务分支；
 - 中等/复杂任务：Spec 和 Plan 按 `YYYY-MM-DD-<task-slug>.md` 持久化到 `docs/`；
 - TDD：RED → GREEN → REFACTOR；
-- Review 前执行 Architecture & Documentation Impact Analysis，并同步受影响文档；
+- Review 前执行 Architecture & Documentation Impact Analysis，并按目标项目已有能力同步受影响文档；架构文档同步按目标项目已有能力执行，不凭空要求 JSON 架构文件或 `lint:arch`；
 - 新增较大独立模块时创建专属模块架构文档，并按需添加示意图；
 - 独立 Subagent Review；
 - Review / QA 失败自动回流；
