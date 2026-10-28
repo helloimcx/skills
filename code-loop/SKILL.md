@@ -46,7 +46,7 @@ description: 本地确定性自动化研发闭环（Control Plane 协调器、Gi
 3. **考题唯一源（`.code-loop/verify.json`）**：验证门禁标准存放在目标项目根目录下，且**锁定读取 base commit**，杜绝 PR 分支自行降低门禁标尺。
 4. **三大研发循环**：
    - `discover`：定时盘点平台事实，识别新 Issues / PRs 并入队。
-   - `handler`：认领 Issue，在独立 worktree 中以 TDD 实现，提 PR 并维护反坍缩台账。
+   - `handler`：认领 Issue，在独立 worktree 中以 TDD 实现；先跑相关测试，再由项目 `verification_fast` 考题提供快速门禁（缺省时完整验证）；提 PR 并维护反坍缩台账。
    - `reviewer`：认领 PR，执行隔离门禁验证与覆盖率检查，提交 LGTM / BLOCKED / FAILED 判词并调度合并。
 5. **Operator 自治与分级升级**：基于 `operator.md` 白名单执行 WAL 检查点、状态采集刷新与未决重发；严重问题自动向 GitHub 提交 Issue 升级。
 
@@ -141,17 +141,22 @@ Skill 的 `scripts/` 目录提供路径稳定的委托 CLI 入口（自动路由
 服务优先读取环境变量 `GITHUB_TOKEN`，或机器本地凭据文件 `~/.code-loop/credentials/GITHUB_TOKEN`，并支持本地 `gh` CLI 自动继承身份（`gh auth token`）。
 
 ### 2. 目标仓库考题配置（`.code-loop/verify.json`）
-在受控项目根目录添加门禁定义：
+在受控项目根目录添加门禁定义。下面是 Python / pytest 项目的示例；按目标项目的真实测试入口调整。Handler 轮可选使用快速考题，Reviewer 轮始终运行完整 `verification`：
 ```json
 {
   "verification": [
     ["{python}", "-m", "pytest", "tests/", "-q"]
   ],
+  "verification_fast": [
+    ["{python}", "-m", "pytest", "tests/test_issue_module.py", "-q"]
+  ],
   "required_checks": [
-    "ci/build"
+    "CI Gate"
   ]
 }
 ```
+
+`verification_fast` 可省略或设为空列表；此时所有轮次均回退到完整验证。配置新的 required check 前，先在目标仓库运行工作流并确认 GitHub 上的实际检查名。`.code-loop/verify.json` 的更改须通过独立 PR 合并到 base 后才生效。
 
 ### 3. 项目配置文件（`~/.code-loop/projects/<org__repo>/control-plane.json`）
 ```json

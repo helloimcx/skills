@@ -39,11 +39,13 @@ python scripts/control_plane.py claim --loop handler [--item issue:<NUMBER>]
 3. **架构与文档检查**：若涉及公共接口或模块结构变动，同步更新文档。
 
 ### §4 门禁验证（Verify）
-调用控制面运行全量项目验证考题：
+先对修改点和相关模块运行定向测试，并覆盖受影响的接口或持久化边界。随后调用控制面验证本轮考题：
 ```bash
 python scripts/control_plane.py verify --execution <EXECUTION_ID> --token <TOKEN>
 ```
-确保全量测试、代码风格和静态检查 100% 通过。
+- `handler` 轮有非空 `verification_fast` 时执行快速考题；缺省或空列表时回退 `verification`。
+- 改动风险高、影响面不明确或定向结果不足以证明边界时，扩大本地验证范围。快速考题不能代替 PR 的完整 CI 或 Reviewer 的完整验证。
+- 考题由目标项目 base commit 提供；需要更改考题时，先通过独立 PR 合并配置，再领取后续任务。
 
 ### §5 推送分支与创建 PR
 1. 将提交推送到远端仓库：

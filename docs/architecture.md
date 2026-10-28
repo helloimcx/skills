@@ -76,6 +76,10 @@ The independently runnable `services/code-loop` package supplies the Control Pla
 
 The Control Plane also stores machine-scoped Operator tasks. **Operator is the global CP-side router**: durable PR repair and discover-stall events become typed tasks routed by enrolled machine identity and project grant. **WorkerAgent is the resident worker-side ingress and supervisor**; it starts a fresh **worker-local Coordinator** for each task. The Coordinator handles only that task, delegating PR changes to an independent Handler or analyzing worker evidence and selecting allowlisted maintenance actions. The Handler edits repository files, while deterministic local adapters perform machine actions. See [Code Loop architecture](architecture/modules/code-loop.md) and the [2026-10-25 task-flow change](architecture/changes/2026-10-25-operator-review-handler-auto-dispatch.md).
 
+### Test and CI flow
+
+The repository contract suite and code-loop service suite are independent GitHub Actions jobs. Each runs on Python 3.9, the project's declared minimum supported version, for every pull request, `main` push, and manual dispatch. A final `CI Gate` job succeeds only after both suites pass. Developers can run related tests first and expand coverage based on risk; code-loop Handler verification uses the project's optional `verification_fast` commands when present, while Reviewer verification remains complete. The required-check entry is configured separately in the target repository's base-commit `.code-loop/verify.json` and branch protection. See [CI workflow](../.github/workflows/ci.yml).
+
 ## Development and Validation
 
 - Root `README.md` is the public skill index.

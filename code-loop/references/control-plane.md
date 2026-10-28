@@ -58,12 +58,16 @@
   "verification": [
     ["{python}", "-m", "pytest", "tests/", "-q"]
   ],
+  "verification_fast": [
+    ["{python}", "-m", "pytest", "tests/test_issue_module.py", "-q"]
+  ],
   "required_checks": [
-    "ci/build",
-    "lint"
+    "CI Gate"
   ]
 }
 ```
+
+此为 Python / pytest 项目的示意配置；目标项目必须填写自身真实测试入口。`verification_fast` 是可选的快速反馈层，非空时用于 Reviewer 以外的验证轮次（主要是 Handler）；Reviewer 始终使用完整 `verification`。省略或留空时回退完整验证。相关测试通过后仍需按风险执行必要的集成或边界检查。
 
 ### 核心安全规则
 
@@ -71,7 +75,7 @@
 2. **考题变更流程**：修改验证命令必须作为针对 base 分支的独立 PR 合并后，下一轮方生效。
 3. **考题篡改护栏（`exam.touched_by_pr`）**：当 PR diff 精确触碰 `.code-loop/verify.json` 时，发布阶段会自动追加强制安全警示行并打上审计事件。
 4. **Fail-Closed 故障回退**：若文件损坏或读取格式非法，立即拒绝 claim（报 `EXAM_INVALID` / `EXAM_UNAVAILABLE`），绝不静默放行；仅在文件缺失（404）时平滑回退到机器本地旧配置。
-5. **Checks 与 Status 双引擎覆盖**：`required_checks` 名单同时覆盖 GitHub Actions Check Runs（以 Job/Workflow 名匹配，要求 `status == 'completed'` 且 `conclusion == 'success'`）与 Commit Status API（以 context 名匹配，要求 `state == 'success'`）。
+5. **Checks 与 Status 双引擎覆盖**：`required_checks` 名单同时覆盖 GitHub Actions Check Runs（以 Job/Workflow 名匹配，要求 `status == 'completed'` 且 `conclusion == 'success'`）与 Commit Status API（以 context 名匹配，要求 `state == 'success'`）。例如 GitHub Actions job 的可见名称为 `CI Gate` 时，使用完全匹配的 `CI Gate`；先在该仓库真实运行确认名称，再将其加入考题。
 
 ---
 

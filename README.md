@@ -20,6 +20,17 @@ This repository contains a collection of Agent Skills compatible with [skills.sh
 |---|---|---|
 | `code-loop` | `services/code-loop/` | 本地确定性控制面与自动化评审调度服务（Control Plane 协调器、Dashboard 监控面板、GitHub 适配集成、Worker Agent 指令通道） |
 
+## Development Tests and CI
+
+开发时可先运行相关用例和仓库契约测试；改动范围或风险较高时再运行完整服务套件：
+
+```bash
+python3 -m unittest discover -s tests -p 'test_*.py'
+python3 -m unittest discover -s services/code-loop/tests -p 'test_*.py'
+```
+
+GitHub Actions 会在所有 Pull Request、推送到 `main` 和手动触发时使用 Python 3.9 运行上述两套测试，并汇总到 `CI Gate`。3.9 是项目声明的最低兼容版本。该检查默认提供 CI 结果；要阻止不通过的 PR 合并，目标仓库还需把实际运行成功的 `CI Gate` 配置为 required status check。code-loop 项目的快速门禁另由 base commit 中的 `.code-loop/verify.json` 配置。
+
 ## Installation & Usage
 
 ### Via skills.sh CLI (`npx skills`)
