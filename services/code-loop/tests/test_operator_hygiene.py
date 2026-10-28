@@ -336,10 +336,12 @@ class CollectCliSingleWriterTest(unittest.TestCase):
                            return_value={'failed': 0, 'projects': []}), \
                 mock.patch('codeloop.dash.notify.push_new_alerts',
                            return_value={'error': None}), \
+                 mock.patch('codeloop.dash.serving.precompute') as precompute, \
                 mock.patch('codeloop.dash.store.connect', return_value=fake_db), \
                 mock.patch('codeloop.operator.store.open_store', return_value=fake_store):
             runpy.run_path(str(script), run_name='__main__')
         ingest_wd.assert_not_called()
+        precompute.assert_not_called()
 
 
 if __name__ == '__main__':

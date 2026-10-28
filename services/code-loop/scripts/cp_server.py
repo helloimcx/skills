@@ -227,6 +227,7 @@ def _ui_listener(settings, coordinator):
     dispatcher. Returns (httpd, db) or (None, None) when the UI is disabled
     (``ui_port: null`` in server.json)."""
     from codeloop.dash import collect, serve as dash_serve, store as dash_store
+    from codeloop.dash.refresh import make_process_refresh
     ui_port = settings.get('ui_port', DEFAULT_UI_PORT)
     if ui_port is None:
         return None, None
@@ -254,23 +255,11 @@ def _ui_listener(settings, coordinator):
     db_path = str(collect.DEFAULT_DB)
     root = settings['projects_root']
     alerts = _dash_alert_config()
-    # Operator subscription (MAJOR-1 / spec PR1 第 2 挂点): the in-process
-    # evaluation point mirrors the CLI collect path — fail-closed, off by
-    # default, and the UI keeps serving when the subscription cannot start.
-    on_alerts = None
-    op_store = None
-    try:
-        from codeloop.operator import config as operator_config
-        from codeloop.operator import ingest as operator_ingest
-        from codeloop.operator import store as operator_store
-        op_cfg = operator_config.load_operator_config(_dash_config())
-        if op_cfg and op_cfg.get('enabled'):
-            op_store = operator_store.open_store()
-            on_alerts = (lambda fresh: operator_ingest.ingest_alerts(
-                op_store, op_cfg, fresh))
-    except Exception:
-        on_alerts = None
-        op_store = None
+    dashboard_config = _dash_config() or {}
+    config_path = Path.home() / '.code-loop' / 'dashboard.json'
+    refresh = make_process_refresh(
+        db_path, root=root, config_path=config_path,
+        timeout=dashboard_config.get('collect_timeout_seconds', 300))
     db = dash_store.connect(db_path)
     # Operator assembly (2026-09-30): everything behind one machine-local
     # switch. Absent/disabled config leaves serve byte-identical to before.
@@ -287,7 +276,7 @@ def _ui_listener(settings, coordinator):
                    'escalate_human'},
                   operator_wiring.make_executor(
                       root, coordinator.dispatcher,
-                      dash_serve.make_refresh(db_path, root=root, config=alerts),
+                      refresh,
                       dash_db=db_path))
         coordinator.event_sink, _feed = operator_wiring.start_consumer(
             op_conn, op_cfg, coordinator.dispatcher,
@@ -298,8 +287,7 @@ def _ui_listener(settings, coordinator):
     handler = dash_serve.create(
         db, config=alerts, now=time.time,
         db_factory=lambda: dash_store.connect_readonly(db_path),
-        on_collect=dash_serve.make_refresh(db_path, root=root, config=alerts,
-                                           on_alerts=on_alerts),
+        on_collect=refresh,
         on_reply=dash_serve.make_replier(db_path, root=root),
         on_review_trigger=dash_serve.make_command_trigger(db_path, root=root,
                                                           coordinator=coordinator),
