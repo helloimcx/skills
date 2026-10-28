@@ -246,18 +246,35 @@ class Service(CommandLedgerMixin):
                 continue
             related = [issues[n] for n in linked[pr['number']] if n in issues]
             payload = {'pr': pr, 'issues': related, 'base_sha': snapshot['base_sha']}
-            changes, approved_here = gate_mod.terminal_verdicts(
+            changes, validation_failed, approved_here = gate_mod.terminal_verdicts(
                 self.store, pr, gate_mod.changes_requested(pr))
             resources = ['pr-%s' % pr['number'], 'branch-' + pr['head']['ref']]
             resources += ['issue-%s' % n for n in linked[pr['number']]]
             signal = signals.get('review:%s' % pr['number'])
-            if changes or pr.get('mergeable') is False:
+            validation_base_stale = (validation_failed
+                                     and gate_mod.attributed_stale(signal, pr))
+            validation_frozen = (validation_failed
+                                 and gate_mod.is_frozen(signal, pr, open_gates,
+                                                        snapshot['base_sha']))
+            if validation_base_stale:
+                payload['task'] = 'PR_SYNC_BASE'
+                add('repair:%s' % pr['number'], 'handler', payload,
+                    resources + ['path:*'], 20)
+            elif validation_frozen:
+                # The validation failure is known to come from the current
+                # base or a broken environment. Keep it out of the PR repair
+                # lane until that independent gate state changes.
+                continue
+            elif changes or validation_failed or pr.get('mergeable') is False:
                 repair_reasons = []
                 if changes:
                     repair_reasons.append('changes_requested')
+                if validation_failed:
+                    repair_reasons.append('validation_failed')
                 if pr.get('mergeable') is False:
                     repair_reasons.append('merge_conflict')
-                payload['task'] = 'PR_REVIEW_FIX' if changes else 'PR_CONFLICT_RESOLUTION'
+                payload['task'] = ('PR_REVIEW_FIX' if changes or validation_failed
+                                   else 'PR_CONFLICT_RESOLUTION')
                 payload['repair_reasons'] = repair_reasons
                 add('repair:%s' % pr['number'], 'handler', payload, resources + ['path:*'], 20)
             elif gate_mod.attributed_stale(signal, pr):

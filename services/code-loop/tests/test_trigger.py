@@ -438,6 +438,14 @@ class BuildRoundPromptTests(unittest.TestCase):
                  repair_reasons=['changes_requested', 'merge_conflict']))
         self.assertIn('先按评审意见修复，再合并', combined)
 
+        validation = trigger.build_round_prompt(
+            'handler', self.row, 7,
+            dict(self.claim, task='PR_REVIEW_FIX',
+                 repair_reasons=['validation_failed']))
+        self.assertIn('判定归属', validation)
+        self.assertIn('当前基线也红或环境故障时不编辑 PR', validation)
+        self.assertIn('无法从 head/base 验证证据判定失败归属', validation)
+
     def test_handler_entry_doc_is_a_soft_convention(self):
         self._write(self.handler_doc)
         self._write(self.handler_entry)

@@ -45,6 +45,15 @@ python scripts/control_plane.py verify --execution <EXECUTION_ID> --token <TOKEN
 ```
 确保全量测试、代码风格和静态检查 100% 通过。
 
+### PR 验证失败的归属
+
+`repair:<PR>` 可能是 `PR_REVIEW_FIX`，也可能是基线同步/冲突修复。处理 `repair_reasons=validation_failed` 时，先阅读本次验证证据和 PR 评论，确认失败属于哪一侧，再决定是否编辑 PR 分支：
+
+- 若相同失败在 PR head 复现、在基线通过，按 `PR_REVIEW_FIX` 最小修复 PR，并保留失败用例与验证证据。
+- 若失败在 PR 的分叉点复现、在当前基线通过，按 `PR_SYNC_BASE` 合并当前基线并验证，不把无关基线改动塞进 PR 修复。
+- 若当前基线也复现，或验证环境本身故障，不编辑 PR 分支。保留可复现命令、失败摘要和 head/base SHA，在报告及 PR 评论中说明归属；基线问题进入独立基线/门禁处理，环境问题等待门禁恢复。
+- 证据不能区分归属时，报告 `BLOCKED` 并在 PR 留下具体证据和所需下一步，不猜测修复归属。
+
 ### §5 推送分支与创建 PR
 1. 将提交推送到远端仓库：
    ```bash
