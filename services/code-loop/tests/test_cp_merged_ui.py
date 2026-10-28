@@ -13,6 +13,7 @@ import unittest
 import urllib.request
 from http.server import ThreadingHTTPServer
 from pathlib import Path
+from unittest.mock import patch
 
 import sys as _sys
 from pathlib import Path as _Path
@@ -26,6 +27,7 @@ import dashboard
 import cp_server
 from codeloop.cp.server import Coordinator
 from codeloop.dash import collect
+from codeloop.operator import face as operator_face
 
 
 def get(base, path):
@@ -49,6 +51,10 @@ class MergedUiListenerTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
+        self._code_loop_home = os.environ.get('CODE_LOOP_HOME')
+        os.environ['CODE_LOOP_HOME'] = str(self.root / 'home')
+        self._operator_wired = set(operator_face.WIRED)
+        self._operator_executor = operator_face._EXECUTOR
         self._db = collect.DEFAULT_DB
         collect.DEFAULT_DB = self.root / 'dash.sqlite'
         (self.root / 'projects').mkdir()
@@ -59,10 +65,24 @@ class MergedUiListenerTests(unittest.TestCase):
 
     def tearDown(self):
         collect.DEFAULT_DB = self._db
+        operator_face.WIRED.clear()
+        operator_face.WIRED.update(self._operator_wired)
+        operator_face._EXECUTOR = self._operator_executor
+        if self._code_loop_home is None:
+            os.environ.pop('CODE_LOOP_HOME', None)
+        else:
+            os.environ['CODE_LOOP_HOME'] = self._code_loop_home
         self.tmp.cleanup()
 
     def test_ui_serves_views_from_the_merged_process(self):
-        httpd, db = cp_server._ui_listener(self.settings, self.coordinator)
+        # Force the operator-enabled branch even on machines where its local
+        # dashboard config is absent. _ui_listener wires module-global face
+        # state, so tearDown must restore it before sibling test modules run.
+        with patch.object(cp_server, '_dash_config',
+                          return_value={'operator': {'enabled': True}}), \
+                patch.object(cp_server.operator_wiring, 'start_consumer',
+                             return_value=(None, None)):
+            httpd, db = cp_server._ui_listener(self.settings, self.coordinator)
         self.assertIsNotNone(httpd)
         try:
             self.assertEqual('127.0.0.1', httpd.server_address[0])
