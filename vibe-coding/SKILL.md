@@ -149,13 +149,15 @@ Spec 和 Plan 必须自包含，并保留上一节规定的必要字段与内嵌
 代码是系统实现的事实来源。实现完成后、进入 Review 前，读取并执行 [references/documentation-sync.md](references/documentation-sync.md)：基于当前工作区与目标分支的完整 Git Diff 检查架构和文档影响，不得跳过。
 
 - **若判定为 `Architecture Impact: Required`：**
-  1. 更新 `docs/architecture/` 下的正式 L1-L3 规范（`system-architecture.json`、`*.workflow.json`、`*.sequence.json`、`*.lifecycle.json`）；
-  2. 完善 `docs/architecture/changes/YYYY-MM-DD-<task-slug>.md` 语义变更记录，引用 Plan 中的 Mermaid/ASCII 方案图；
-  3. 执行项目已有且适用的架构门禁（如 `lint:arch`），按项目契约校验规范；
-  4. 同步更新 `docs/architecture/overview.md` 全景矩阵大盘与 README managed block。
+  1. 先检查目标仓库实际存在的权威架构资产、维护规则和适用检查命令，再按该项目契约确定同步范围；
+  2. 更新项目实际的权威架构文档、受影响模块说明和必要的语义变更记录，并引用 Plan 中的 Mermaid/ASCII 方案图；
+  3. 仅当项目确实维护并要求 JSON L1-L3 规范时，按其 schema 更新 `system-architecture.json`、`*.workflow.json`、`*.sequence.json`、`*.lifecycle.json` 等资产；仅当 `lint:arch` 实际可用且适用时运行；
+  4. 按项目维护规则同步 overview、README managed block 或其他索引。
+- 对 Markdown-only 项目，更新其现有权威 Markdown 架构文档，不凭空创建 JSON schema、`lint:arch` 命令或新项目脚手架。
+- 对项目没有要求的架构资产或检查，记录 `[N/A]` 及理由；对项目契约要求但因环境原因无法运行的门禁，记录 `[BLOCKED]` 和原因，不得伪报 `[PASS]`。
 - **若无架构与文档影响：** 明确记录 `Docs Impact: None`。
 - 新增职责与边界清晰的较大独立模块时，创建对应模块架构文档并按需配图；
-- `docs/architecture/` 描述当前代码的真实架构，历史决策由 ADR 保存，变更历史由 `changes/` 与 Git 保存。
+- 项目实际的权威架构文档描述当前代码的真实架构，历史决策由 ADR 保存，变更历史由项目约定的变更记录与 Git 保存。
 
 文档同步属于 Definition of Done。若分析过程引发代码修改，重新执行受影响的测试和本步骤。
 
@@ -211,7 +213,7 @@ QA 失败时执行：
 
 - 已批准的 Scope 已实现；
 - Acceptance Criteria 有明确验证结论；
-- 已记录文档影响分析，所有受影响架构（含 L1-L3 规范及 `lint:arch` 门禁）与文档已同步；
+- 已记录文档影响分析，受影响的项目权威架构文档与文档已同步；适用的 JSON L1-L3 规范和 `lint:arch` 已验证，不适用或受环境阻塞的项目能力有明确 `[N/A]` / `[BLOCKED]` 结论；
 - Review 无未解决阻塞问题；
 - 适用的真实主路径已验证，或明确说明环境限制；
 - 涉及 API/CLI 时，已通过真实调用检查性能并记录简要结果，或明确标记 `[BLOCKED]` 及原因；

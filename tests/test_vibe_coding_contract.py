@@ -84,6 +84,26 @@ class VibeCodingContractTests(unittest.TestCase):
         ):
             self.assertIn(spec_type, doc_sync)
 
+    def test_architecture_sync_adapts_to_project_contract(self) -> None:
+        skill = (VIBE_CODING_DIR / "SKILL.md").read_text(encoding="utf-8")
+        readme = (VIBE_CODING_DIR / "README.md").read_text(encoding="utf-8")
+        doc_sync = (
+            VIBE_CODING_DIR / "references" / "documentation-sync.md"
+        ).read_text(encoding="utf-8")
+        qa = (VIBE_CODING_DIR / "references" / "qa.md").read_text(encoding="utf-8")
+
+        for doc in (skill, doc_sync):
+            self.assertIn("目标仓库实际存在", doc)
+            self.assertIn("Markdown-only", doc)
+            self.assertIn("JSON L1-L3", doc)
+            self.assertIn("[N/A]", doc)
+            self.assertIn("[BLOCKED]", doc)
+
+        self.assertIn("不强制", doc_sync)
+        self.assertIn("新项目初始化", doc_sync)
+        self.assertIn("架构文档同步按目标项目已有能力执行", readme)
+        self.assertIn("当项目包含架构规范且契约要求时", qa)
+
     def test_review_contract_has_coverage_checklist_and_divide_and_conquer(self) -> None:
         skill = (VIBE_CODING_DIR / "SKILL.md").read_text(encoding="utf-8")
         review = (VIBE_CODING_DIR / "references" / "review.md").read_text(encoding="utf-8")
