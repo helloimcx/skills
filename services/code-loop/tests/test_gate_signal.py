@@ -365,6 +365,28 @@ class GateSignalTests(unittest.TestCase):
         self.assertNotIn('repair:2', {i['key'] for i in self.store_items() if i['state'] == 'READY'})
         self.assertNotIn('review:2', self.ready_keys())
 
+    def test_frozen_validation_preserves_changes_requested_repair(self):
+        e = self.review_round(attribution={'verdict': 'base-defect', 'base_tip_sha': 'base1'})
+        self._publish_validation_failed(e)
+        self._sent_verdict(e['id'], 'Changes requested')
+        self.sync(base_sha='base1', prs=[self.pr()])
+        repair = next(i for i in self.store_items('repair:2') if i['state'] == 'READY')
+        payload = json.loads(repair['payload'])
+        self.assertEqual(payload['task'], 'PR_REVIEW_FIX')
+        self.assertIn('changes_requested', payload['repair_reasons'])
+        self.assertNotIn('validation_failed', payload['repair_reasons'])
+
+    def test_stale_validation_preserves_changes_requested_repair_reason(self):
+        e = self.review_round(attribution={'verdict': 'stale-branch', 'base_tip_sha': 'base1'})
+        self._publish_validation_failed(e)
+        self._sent_verdict(e['id'], 'Changes requested')
+        self.sync(base_sha='base1', prs=[self.pr()])
+        repair = next(i for i in self.store_items('repair:2') if i['state'] == 'READY')
+        payload = json.loads(repair['payload'])
+        self.assertEqual(payload['task'], 'PR_SYNC_BASE')
+        self.assertIn('changes_requested', payload['repair_reasons'])
+        self.assertIn('validation_failed', payload['repair_reasons'])
+
     def store_items(self, key=None):
         return [i for i in self.s.store.items() if key is None or i['key'] == key]
 

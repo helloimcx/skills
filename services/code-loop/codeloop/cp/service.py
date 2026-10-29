@@ -256,23 +256,29 @@ class Service(CommandLedgerMixin):
             validation_frozen = (validation_failed
                                  and gate_mod.is_frozen(signal, pr, open_gates,
                                                         snapshot['base_sha']))
+            repair_reasons = []
+            if changes:
+                repair_reasons.append('changes_requested')
+            if validation_failed and not validation_frozen:
+                repair_reasons.append('validation_failed')
+            if pr.get('mergeable') is False:
+                repair_reasons.append('merge_conflict')
             if validation_base_stale:
                 payload['task'] = 'PR_SYNC_BASE'
+                payload['repair_reasons'] = repair_reasons
                 add('repair:%s' % pr['number'], 'handler', payload,
                     resources + ['path:*'], 20)
             elif validation_frozen:
-                # The validation failure is known to come from the current
-                # base or a broken environment. Keep it out of the PR repair
-                # lane until that independent gate state changes.
-                continue
-            elif changes or validation_failed or pr.get('mergeable') is False:
-                repair_reasons = []
-                if changes:
-                    repair_reasons.append('changes_requested')
-                if validation_failed:
-                    repair_reasons.append('validation_failed')
-                if pr.get('mergeable') is False:
-                    repair_reasons.append('merge_conflict')
+                # Suppress only the validation-derived repair. Independent
+                # review and merge-conflict work remains actionable.
+                if not (changes or pr.get('mergeable') is False):
+                    continue
+                payload['repair_reasons'] = repair_reasons
+                payload['task'] = ('PR_REVIEW_FIX' if changes
+                                   else 'PR_CONFLICT_RESOLUTION')
+                add('repair:%s' % pr['number'], 'handler', payload,
+                    resources + ['path:*'], 20)
+            elif repair_reasons:
                 payload['task'] = ('PR_REVIEW_FIX' if changes or validation_failed
                                    else 'PR_CONFLICT_RESOLUTION')
                 payload['repair_reasons'] = repair_reasons
