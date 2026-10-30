@@ -13,6 +13,7 @@ This repository contains a collection of Agent Skills compatible with [skills.sh
 | `code-loop` | 本地确定性自动化研发闭环（Control Plane 协调器、GitHub 审查与合并调度、门禁修复、Operator 监控自治与 Dashboard） | `npx skills add helloimcx/skills --skill code-loop` |
 | `d2-diagrams` | 根据自然语言描述生成 D2 架构图、流程图、ERD、UML 类图与序列图 | `npx skills add helloimcx/skills --skill d2-diagrams` |
 | `github-arch-analyzer` | 分析 GitHub 项目架构并输出结构化中文技术文档 | `npx skills add helloimcx/skills --skill github-arch-analyzer` |
+| `clash-tailscale-coexist` | 彻底根治 Clash (Mihomo/TUN) 与 Tailscale 路由打架、DNS投毒与 Happy Eyeballs IPv6 黑洞冲突 | `npx skills add helloimcx/skills --skill clash-tailscale-coexist` |
 
 ## Services Overview
 
