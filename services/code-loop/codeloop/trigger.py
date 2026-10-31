@@ -211,6 +211,10 @@ def build_round_prompt(loop, row, number=None, round_claim=None):
 
 def _repair_instruction(task, reasons):
     reasons = set(reasons or ())
+    if task == 'PR_REVIEW_FIX' and 'validation_failed' in reasons:
+        return ('先依据当前 head/base 的失败复现证据判定归属：PR head 红且基线绿才修 PR；'
+                '分叉点红而当前基线绿则同步基线；当前基线也红或环境故障时不编辑 PR，'
+                '记录证据并转入独立基线/门禁处理。')
     if task == 'PR_REVIEW_FIX' and 'merge_conflict' in reasons:
         return ('先按评审意见修复，再合并 origin/<基线分支> 并解决冲突；'
                 '保留双方意图，完成两类修复后验证。')
@@ -227,6 +231,8 @@ def _repair_instruction(task, reasons):
 
 
 def _uncertainty_instruction(task, reasons):
+    if task == 'PR_REVIEW_FIX' and 'validation_failed' in set(reasons or ()):
+        return '无法从 head/base 验证证据判定失败归属时按契约 report BLOCKED 并在 PR 留下命令、head/base SHA 和证据，不编辑 PR。'
     if task == 'PR_REVIEW_FIX' and 'merge_conflict' not in set(reasons or ()):
         return '无法判断评审意见时按契约 report BLOCKED 并留痕评论，不自行扩展修复范围。'
     return '判不了的冲突按契约 report BLOCKED 并留痕评论（禁止猜测），不硬造解决方案。'

@@ -143,9 +143,11 @@ def terminal_verdicts(store, pr, changes):
     decision inputs.
 
     Terminal verdicts at this head are facts, not reopeners: an Approved PR
-    waits for the human merge and is never re-litigated; a Validation failed
-    feeds the same repair lane as a Changes requested."""
+    waits for the human merge and is never re-litigated. Changes requested
+    and Validation failed stay separate so a failed check can be attributed
+    before entering the PR repair lane."""
     approved_here = False
+    validation_failed = False
     head = pr['head']['sha']
     for row in store.db.execute(
             "SELECT payload FROM outbox WHERE action='review_comment' AND state='SENT'"):
@@ -157,8 +159,8 @@ def terminal_verdicts(store, pr, changes):
         elif 'Decision: Approved for manual merge' in body['body']:
             approved_here = True
         elif 'Decision: Validation failed' in body['body']:
-            changes = True
-    return changes, approved_here
+            validation_failed = True
+    return changes, validation_failed, approved_here
 
 
 def _at_this_head(signal, pr):

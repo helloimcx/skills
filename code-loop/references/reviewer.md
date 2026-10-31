@@ -1,124 +1,103 @@
 # Reviewer 规则与评审契约
 
-本文档是 code-loop 中 **Reviewer 轮**（自动化审查与合并门禁）的唯一规则源（`rules_doc`）。
+本文档是 code-loop 中 **Reviewer 轮**（PR 独立审查与门禁判定）的唯一规则源（`rules_doc`）。Reviewer 提供证据和判定；CP 校验后发布正式评审评论。批准只表示符合手工合并条件，不授权 Agent 自动合并。
 
 ---
 
-## 1. 目标与角色
+## 1. 判定与权限边界
 
-Reviewer Main Agent 负责对 GitHub Pull Request 进行端到端确定性审查、门禁验证与合并调度：
-- **客观验证**：以项目仓库自身 `.code-loop/verify.json` 考题为唯一准绳，严禁以主观感受替代测试验证。
-- **环境隔离**：每次评审必须检出独立 Git worktree，严禁污染宿主主工作区。
-- **原子发布**：评审结论（LGTM / BLOCKED / FAILED）由 CP 统一推导并向 GitHub 原子发布。
+Reviewer 报告的 `decision` 必须使用 CP 接受的以下值：
+
+- `Approved for manual merge`：本轮验证通过、覆盖度完整、所需 CI 检查通过，可由有权限的人手工合并。
+- `Changes requested`：发现可修复的问题；报告摘要和评审评论应指出文件、位置及所需更改。
+- `Blocked`：当前无法完成有效判断，例如外部依赖或环境问题。必须提供与本轮验证证据相符的 `gate` 说明；不能用它代替代码修改请求。
+- `Validation failed`：门禁命令失败或验证无法通过。报告应写明失败命令和实际输出摘要。
+
+Reviewer 不得合并 PR、推送主分支或将批准表述为自动合并授权。CP 的批准发布是给人的评审结果；合并仍由获授权的人执行。
 
 ---
 
 ## 2. 标准审查生命周期
 
-```
-┌─────────┐      ┌───────────────┐      ┌─────────────────┐
-│ §1 领取 │ ───► │ §2 准备与绑定 │ ───► │ §3 差异与覆盖率 │
-└─────────┘      └───────────────┘      └─────────────────┘
-                                                 │
-                                                 ▼
-┌─────────┐      ┌───────────────┐      ┌─────────────────┐
-│ §6 发布 │ ◄─── │ §5 提交报告   │ ◄─── │ §4 门禁验证     │
-└─────────┘      └───────────────┘      └─────────────────┘
-```
+1. 使用 `python scripts/control_plane.py claim --loop reviewer [--item review:<PR_NUMBER>]` 领取单个 PR。无结果时结束本轮。
+2. 按 CP 配置准备独立 worktree，并用 `bind --execution <ID> --token <TOKEN> --worktree <PATH>` 绑定。
+3. 检查 PR diff、架构约束、测试覆盖和 `.code-loop/verify.json`。不得降低或修改门禁来取得通过。
+4. 运行 `python scripts/control_plane.py verify --execution <ID> --token <TOKEN>`。报告必须对应当前 PR head 和本轮验证结果。
+5. 对 diff 中每个文件记录 `coverage`：完整审查的文件列入 `reviewed`；跳过的文件列入 `skipped` 并说明原因。批准必须提供完整且 `ok: true` 的 coverage；不得虚构已通过的测试、CI 或覆盖度。
+6. 提交符合本文件 schema 的 `report.json`，随后调用 `publish`。首次评审（或 PR head 已变化）必须请求 `review_comment`，以便正式判定确实发布到 PR。
+7. 发布后回收本轮 worktree。
 
-### §1 领取工作项（Claim）
-```bash
-python scripts/control_plane.py claim --loop reviewer [--item review:<PR_NUMBER>]
-```
-- 若返回 `null` 或空结果，表示当前无待审 PR，直接输出总结结束。
-- 成功返回 `{"id": "<EXECUTION_ID>", "token": <TOKEN>, "item": {"key": "review:<PR>", ...}}`。
+CP 还会验证独立 Reviewer 身份、当前 PR head、required checks 和报告时序。批准需要该 PR 无冲突、required checks 全部成功及本轮 verification 通过。所需远程检查尚未成功时不得报告批准。
 
-### §2 准备与绑定（Bind）
-1. 在配置的 `worktree_root` 下为当前 PR 检出独立 worktree：
-   ```bash
-   git fetch origin pull/<PR_NUMBER>/head:pr/<PR_NUMBER>
-   git worktree add <WORKTREE_PATH> pr/<PR_NUMBER>
-   ```
-2. 调用 CP 绑定：
-   ```bash
-   python scripts/control_plane.py bind --execution <EXECUTION_ID> --token <TOKEN> --worktree <WORKTREE_PATH>
-   ```
+---
 
-### §3 差异与代码覆盖率检查
-1. 提取变更文件清单与 diff：
-   ```bash
-   git diff origin/<BASE_BRANCH>...HEAD
-   ```
-2. 规则审查：
-   - 是否包含未经允许的外部依赖引入？
-   - 是否触碰架构红线或敏感文件？
-   - 若触碰 `.code-loop/verify.json`，需核查变更是否符合考题安全护栏（严禁弱化验证）。
-3. 覆盖率门禁：新增或修改的核心业务逻辑必须配有对应单元测试。
+## 3. 报告格式
 
-### §4 门禁验证（Verify）
-在绑定的 worktree 内调用控制面门禁验证：
-```bash
-python scripts/control_plane.py verify --execution <EXECUTION_ID> --token <TOKEN>
-```
-- CP 会自动代入 base 分支中的 `.code-loop/verify.json`，执行验证命令阵列。
-- 若任一命令非 0 退出，状态机记为失败，终止放行。
+当前 CP 的 report 字段白名单是 `decision`、`reviewer`、`summary`、`action`、`payload`、`coverage`、`gate` 和 Discover 专用的 `actions`。Reviewer 必填 `decision`、`reviewer`、`summary`。Reviewer 报告不接受旧字段 `verdict`、`checks`、`feedback`，也不接受 Discover 批量字段 `actions`。
 
-### §5 判词裁决与提交报告（Report）
-构造标准的评审报告 JSON 文件（`report.json`）：
+常规评审请求用单个 `action` 和 `payload`。首次发布正式 PR 评审时，`action` 为 `review_comment`，`payload.number` 必须是被评审 PR 编号，`payload.body` 写明具体发现或说明。CP 会附上判定、head/base SHA、coverage 摘要和其身份标记。已在同一 head 发布过判定评论时，重跑确认可省略 action。
+
+批准报告示例的 coverage 值仅说明结构。实际提交前必须以真实 diff 逐项填充文件和计算值；不得复制示例当作验证证据：
+
 ```json
 {
-  "verdict": "LGTM",
-  "summary": "全量单元测试通过，架构规范与覆盖率达标，准予自动合并。",
-  "checks": {
-    "verify_exam": "PASSED",
-    "required_checks": "PASSED",
-    "architecture": "PASSED"
+  "decision": "Approved for manual merge",
+  "reviewer": "reviewer-agent",
+  "summary": "本轮验证通过；diff 文件均已检查，required checks 成功。",
+  "action": "review_comment",
+  "payload": {
+    "number": 123,
+    "body": "检查结论与需要作者关注的说明。"
   },
-  "feedback": "无阻塞性问题。"
+  "coverage": {
+    "total": 1,
+    "reviewed": ["src/example.py"],
+    "skipped": [],
+    "ok": true,
+    "rate": 1.0
+  }
 }
 ```
-判词枚举：
-- `LGTM`: 验证全部通过，无阻塞性问题，满足合并条件。
-- `BLOCKED`: 存在需作者确认的业务分歧、依赖阻塞或需修复的冲突。
-- `FAILED`: 单元测试失败、静态语法错误或考题被非法修改。
 
-提交报告：
+失败报告示例只记录失败，不声明通过：
+
+```json
+{
+  "decision": "Validation failed",
+  "reviewer": "reviewer-agent",
+  "summary": "`python -m pytest` 退出码为 1；失败用例为 test_example。",
+  "action": "review_comment",
+  "payload": {
+    "number": 123,
+    "body": "验证失败：请查看本轮报告中的失败命令和诊断摘要。"
+  }
+}
+```
+
+将 `reviewer-agent`、PR 编号、文件清单和验证描述替换为本轮真实信息。`coverage` 的键和数据必须满足 CP 校验：`total` 是文件数；`reviewed` 与 `skipped` 不重叠且数量合计等于 `total`；每个 skipped 项必须包含非空 `path` 和 `reason`；`rate` 必须等于 reviewed 数量除以 total（空 diff 为 1.0）；`ok` 只可在所有 diff 文件均有审查或合理跳过记录时为 true。`Approved for manual merge` 必须包含 coverage 且 `ok: true`。
+
+`Blocked` 报告需要与本轮验证 evidence 一致的 `gate`，由 CP 对照验证记录校验。非批准判定可以省略 coverage；若提供，也必须符合相同结构约束。非批准判定应在 summary 或评审评论中给出可复核的根因和代码位置。
+
+提交并发布：
+
 ```bash
 python scripts/control_plane.py report --execution <EXECUTION_ID> --token <TOKEN> --file report.json
-```
-
-### §6 发布与清理（Publish & Cleanup）
-```bash
 python scripts/control_plane.py publish --execution <EXECUTION_ID> --token <TOKEN>
 ```
-- CP 自动向 GitHub PR 提交正式评审评论，若为 LGTM 且 CI 全部绿灯，自动触发合并动作。
-- 清理本次评审创建的临时 worktree：
-  ```bash
-  git worktree remove <WORKTREE_PATH> --force
-  ```
 
 ---
 
-## 3. 定向评审（看板手动轮）
+## 4. 定向评审与冲突
 
-当用户从监控看板点击某张 PR 卡片时，触发定向评审：
-1. Agent 提示词附带定向后缀：`本轮为看板手动定向评审：目标只有 PR #{number}`。
-2. 若提示词指出看板已完成准备与绑定（`PREPARED` 态），**严禁重复 claim / bind**，直接从 §3 检查与 §4 验证切入。
-3. 严格遵循单个 PR 边界：只评审指定的一个 PR，发布后立即退出，绝不继续抢领后续 PR。
+看板已完成准备与绑定（`PREPARED` 态）时，不得重复 claim 或 bind；从 diff 审查和 CP verify 开始。每轮仅处理指定 PR。
 
----
-
-## 4. PR 冲突修复流（Conflict Repair）
-
-当 PR 与主分支存在代码冲突时：
-1. CP 识别到 `has_conflicts: true`，将工作项标记为待冲突修复。
-2. 修复 Agent 检出 PR 分支，执行 `git merge origin/<BASE_BRANCH>` 或 `git rebase`。
-3. 本地解决冲突后，重新运行全量单测，通过后 push 到 PR 分支并通知 CP。
+PR 与 base 冲突时，不得批准。将冲突细节和受影响文件写入评审结果并请求作者解决；冲突修复由 PR 作者或 Handler 单独完成。Reviewer 不修改 PR 分支。
 
 ---
 
 ## 5. 红线
 
-1. **考题不可越权**：严禁在评审过程中修改 `.code-loop/verify.json` 以求通过。
-2. **非静默红线**：只要给出非 `LGTM` 的结论，必须在 report 中留存详尽根因分析与代码定位，CP 会确保平台可见。
-3. **工作区整洁**：评审结束后无论成功失败，必须完整移除分配的 temporary worktree，防止磁盘泄漏。
+1. 不得更改 `.code-loop/verify.json` 来放宽审查门禁。
+2. 不得伪造 coverage、required checks、测试或独立审查证据。
+3. 不得把 `Approved for manual merge` 描述成自动合并；未获授权不得合并或向主分支推送。
+4. 评审结束后移除本轮创建的 worktree。

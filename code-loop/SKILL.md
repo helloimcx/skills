@@ -47,7 +47,7 @@ description: 本地确定性自动化研发闭环（Control Plane 协调器、Gi
 4. **三大研发循环**：
    - `discover`：定时盘点平台事实，识别新 Issues / PRs 并入队。
    - `handler`：认领 Issue，在独立 worktree 中以 TDD 实现，提 PR 并维护反坍缩台账。
-   - `reviewer`：认领 PR，执行隔离门禁验证与覆盖率检查，提交 LGTM / BLOCKED / FAILED 判词并调度合并。
+   - `reviewer`：认领 PR，在隔离 worktree 中执行门禁验证与覆盖度检查，向 CP 报告 `Approved for manual merge` / `Changes requested` / `Blocked` / `Validation failed`；批准后仍由有权限的人手工合并。
 5. **Operator 自治与分级升级**：基于 `operator.md` 白名单执行 WAL 检查点、状态采集刷新与未决重发；严重问题自动向 GitHub 提交 Issue 升级。
 
 ---

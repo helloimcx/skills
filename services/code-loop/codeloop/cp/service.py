@@ -246,18 +246,41 @@ class Service(CommandLedgerMixin):
                 continue
             related = [issues[n] for n in linked[pr['number']] if n in issues]
             payload = {'pr': pr, 'issues': related, 'base_sha': snapshot['base_sha']}
-            changes, approved_here = gate_mod.terminal_verdicts(
+            changes, validation_failed, approved_here = gate_mod.terminal_verdicts(
                 self.store, pr, gate_mod.changes_requested(pr))
             resources = ['pr-%s' % pr['number'], 'branch-' + pr['head']['ref']]
             resources += ['issue-%s' % n for n in linked[pr['number']]]
             signal = signals.get('review:%s' % pr['number'])
-            if changes or pr.get('mergeable') is False:
-                repair_reasons = []
-                if changes:
-                    repair_reasons.append('changes_requested')
-                if pr.get('mergeable') is False:
-                    repair_reasons.append('merge_conflict')
-                payload['task'] = 'PR_REVIEW_FIX' if changes else 'PR_CONFLICT_RESOLUTION'
+            validation_base_stale = (validation_failed
+                                     and gate_mod.attributed_stale(signal, pr))
+            validation_frozen = (validation_failed
+                                 and gate_mod.is_frozen(signal, pr, open_gates,
+                                                        snapshot['base_sha']))
+            repair_reasons = []
+            if changes:
+                repair_reasons.append('changes_requested')
+            if validation_failed and not validation_frozen:
+                repair_reasons.append('validation_failed')
+            if pr.get('mergeable') is False:
+                repair_reasons.append('merge_conflict')
+            if validation_base_stale:
+                payload['task'] = 'PR_SYNC_BASE'
+                payload['repair_reasons'] = repair_reasons
+                add('repair:%s' % pr['number'], 'handler', payload,
+                    resources + ['path:*'], 20)
+            elif validation_frozen:
+                # Suppress only the validation-derived repair. Independent
+                # review and merge-conflict work remains actionable.
+                if not (changes or pr.get('mergeable') is False):
+                    continue
+                payload['repair_reasons'] = repair_reasons
+                payload['task'] = ('PR_REVIEW_FIX' if changes
+                                   else 'PR_CONFLICT_RESOLUTION')
+                add('repair:%s' % pr['number'], 'handler', payload,
+                    resources + ['path:*'], 20)
+            elif repair_reasons:
+                payload['task'] = ('PR_REVIEW_FIX' if changes or validation_failed
+                                   else 'PR_CONFLICT_RESOLUTION')
                 payload['repair_reasons'] = repair_reasons
                 add('repair:%s' % pr['number'], 'handler', payload, resources + ['path:*'], 20)
             elif gate_mod.attributed_stale(signal, pr):
