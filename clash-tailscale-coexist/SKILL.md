@@ -1,40 +1,36 @@
 ---
 name: clash-tailscale-coexist
 description: >
-  彻底解决 Clash (Clash Verge / Mihomo / Clash Meta) TUN 虚拟网卡模式与 Tailscale 
-  在 macOS / Linux 上的路由与 DNS 打架冲突。当遇到开启 Tailscale 后 Google/ChatGPT 
-  报错 ERR_CONNECTION_CLOSED、关闭 Tailscale 后内网域名 (*.ts.net) 打不开、
-  以及 MagicDNS 劫持导致 GFW 投毒时使用。提供一键诊断、彻底解耦配置模板与排查 SOP。
+  排查 Clash (Clash Verge / Mihomo / Clash Meta) TUN 模式与 Tailscale 同时运行时
+  可能出现的 DNS、路由和连接问题。根据系统、网络和具体配置收集证据，逐项验证可能原因；
+  在评估 MagicDNS、IPv6 和静态映射的影响后再调整设置。
 ---
 
-# Clash 与 Tailscale 终极共存与冲突根治指南
+# Clash 与 Tailscale 共存排查指南
 
-本 Skill 用于彻底根治 **Clash (Clash Verge Rev / Mihomo / Clash Meta) TUN 虚拟网卡模式** 与 **Tailscale** 同时运行时的各类冲突与打架问题。
+本 Skill 帮助排查 **Clash (Clash Verge Rev / Mihomo / Clash Meta) TUN 模式** 与 **Tailscale** 同时运行时的 DNS、路由和连接问题。不同系统版本、DNS 模式、网络和 Clash 配置会产生不同结果；下列机制是待验证的假设，不是普遍根因。先收集本机证据，再决定是否调整配置。
 
 ---
 
 ## 核心冲突模型与机理
 
-两者的打架本质上是 **三层不同机制互相缠绕** 导致的：
+可能相关的机制包括：
 
 ```mermaid
 flowchart TD
     subgraph Conflict1["1. DNS 抢占与投毒"]
-        A1["Tailscale 默认开启 MagicDNS"] -->|注入全局 resolver #1| A2["系统所有 DNS 查询发往 100.100.100.100"]
-        A2 -->|明文转发国内 DNS 114.114.114.114| A3["GFW 嗅探到 chatgpt.com / google"]
-        A3 -->|注入假 IP 192.133.77.133| A4["Chrome 连接假 IP ➔ 超时 / 失败"]
+        A1["启用 Tailscale DNS 接管"] -->|部分配置会改变系统 resolver| A2["查询路径发生变化"]
+        A2 -->|需检查实际上游与返回值| A3["可能出现解析差异"]
     end
 
     subgraph Conflict2["2. IPv6 Happy Eyeballs 黑洞"]
-        B1["家庭/移动宽带默认分配公网 IPv6"] -->|Tailscale DNS 返回真实 AAAA| B2["Chrome 快乐眼球优先连 IPv6"]
-        B2 -->|境外代理 VPS 无 IPv6 出口| B3["IPv6 直连出境被 GFW 跨境丢包"]
-        B3 -->|握手挂起| B4["浏览器转圈 ➔ ERR_CONNECTION_CLOSED"]
+        B1["目标同时有 A 与 AAAA 记录"] -->|客户端选择 IPv6 路径| B2["IPv6 路由或代理路径异常"]
+        B2 -->|需分别测试 v4 / v6| B3["确认或排除 IPv6 路径"]
     end
 
     subgraph Conflict3["3. Clash 内核物理绑定陷阱"]
-        C1["Mihomo 启用 auto-detect-interface"] -->|强制 socket 绑定物理网卡 en0| C2["发往 100.100.100.100 的查询被强送 en0"]
-        C2 -->|未走 utun18 虚拟网卡| C3["路由器丢弃 ➔ i/o timeout"]
-        C3 -->|Clash 内部 nameserver 挂起| C4["*.ts.net 内部域名彻底失联"]
+        C1["Clash 使用接口自动检测或显式绑定"] -->|具体行为取决于内核与配置| C2["出站接口可能与预期不同"]
+        C2 -->|检查路由与连接证据| C3["确认或排除接口选择问题"]
     end
 ```
 
@@ -42,42 +38,53 @@ flowchart TD
 
 ## 终极解耦架构
 
-不采用任何互相妥协的“半开/半关”方案，实行**彻底的职责解耦**：
+以下是可选配置方向。按需选择并一次只改一项；保留原配置以便恢复。
 
 | 组件 / 维度 | 责任分工 | 关键策略 |
 | :--- | :--- | :--- |
-| **Tailscale** | 仅负责虚拟内网数据传输，退出全局 DNS | 执行 `tailscale set --accept-dns=false`，绝不注入全局 `resolver #1` |
-| **Clash (Mihomo)** | 负责全部公网流量的分流与境外加密解析 | 100% 走 Fake-IP 机制，彻底免疫 GFW DNS 投毒 |
-| **Tailscale 内网解析** | 由 Clash 本地 `hosts:` 表直接映射 | 将 `*.ts.net` 节点静态绑定为 `100.x.x.x`，0ms 直连且不触发任何外网 DNS |
-| **本地网络** | 彻底关闭物理 Wi-Fi 的公网 IPv6 | 执行 `networksetup -setv6off Wi-Fi`，根除 Happy Eyeballs 撞墙黑洞 |
+| **Tailscale DNS** | 按需提供 MagicDNS 和 tailnet DNS | 仅在证据表明系统 DNS 路径导致故障时，评估关闭接管；关闭后 MagicDNS 可能不可用 |
+| **Clash (Mihomo)** | 按本机配置执行流量分流与 DNS 解析 | 检查实际 DNS 上游、Fake-IP 与规则配置；不要将某种模式视为通用修复 |
+| **Tailscale 内网解析** | 由 MagicDNS、系统解析器或按需映射提供 | 优先保留 MagicDNS；静态 hosts 映射需确认节点身份和当前地址，并在节点地址变化时更新 |
+| **本地网络** | 维持网络所需的 IPv4 / IPv6 配置 | 只有 v6 专项测试确认路径异常时才考虑临时关闭 IPv6；这可能影响其他网络服务 |
 | **TUN 路由** | 排除 Tailscale 与代理服务端网段 | 排除 `100.64.0.0/10`、`fd7a:115c:a1e0::/48` 及代理 VPS 物理 IP |
 
 ---
 
-## 五步根治 SOP
+## 五步排查 SOP
 
-### 步骤 1：禁止 Tailscale 劫持系统全局 DNS
-在终端执行：
+### 步骤 1：检查系统 DNS 路径
+比较系统 resolver、Tailscale DNS 和故障域名的解析结果：
+```bash
+scutil --dns
+tailscale status
+dig example.com
+dig @100.100.100.100 example.com
+```
+`resolver #1` 为 `100.100.100.100` 只说明系统首选 resolver 是 Tailscale DNS，不足以证明公网 DNS 被投毒。检查实际返回值和上游路径后再归因。
+
+若证据表明系统 DNS 接管导致故障，可评估关闭它。关闭后 MagicDNS / tailnet DNS 可能不可用；先记录原设置并确认替代解析路径，再执行：
 ```bash
 tailscale set --accept-dns=false
 ```
-* **效果**：Tailscale 不再向 macOS 注册全局 `resolver #1`。
-* **内网状态**：虚拟网卡 `utunX` 与内网 IP 通信依然 100% 保持畅通。在菜单栏 Tailscale 图标中，等同于取消勾选 **"Use Tailscale DNS Settings"**。
+若更改前启用了接管，恢复命令为 `tailscale set --accept-dns=true`。较保守的替代方案是保留 Tailscale DNS，只调整 Clash DNS 上游、规则或接口选择，并验证 `.ts.net` 名称仍能解析。
 
 ---
 
-### 步骤 2：关闭物理网卡的公网 IPv6（消除 Happy Eyeballs 黑洞）
-在 macOS 终端执行（无需 root 密码）：
+### 步骤 2：验证 IPv6 路径后再决定是否调整
+先对同一目标分别测试 IPv4 与 IPv6，并查看 Wi-Fi 当前状态和 IPv6 路由。只有 v6 失败而 v4 正常时才考虑临时关闭；关闭可能影响其他依赖 IPv6 的应用和服务。当前设置为 Automatic 时可执行：
 ```bash
+curl -4 -I --connect-timeout 5 https://<目标域名>/
+curl -6 -I --connect-timeout 5 https://<目标域名>/
+networksetup -getinfo Wi-Fi
+route -n get -inet6 <目标IPv6地址>
 networksetup -setv6off Wi-Fi
 ```
-* **效果**：物理 Wi-Fi 只保留 IPv4，Chrome 和系统组件不会再向 GFW 的 IPv6 跨境黑洞发起 TCP 握手。
-* **注意**：Tailscale 内部的 IPv6（`fd7a:...` ULA 地址）由虚拟网卡独立维护，不受此设置影响。
+恢复 Automatic 模式：`networksetup -setv6automatic Wi-Fi`。若原设置是 Link-local 或手动模式，不要用 Automatic 覆盖；先记录并按原模式恢复。物理接口修改对 Tailscale 虚拟接口的影响也应单独验证。
 
 ---
 
 ### 步骤 3：配置 Clash 规则与排除路由
-确保在 Clash Verge 的配置文件或配置增强模板（`Merge.yaml` / `Script.js`）中加入以下关键配置：
+以下仅为配置检查示例，不是通用处方。先备份当前配置，并确认当前 Clash 内核版本支持这些字段；每次只调整与已观察到的故障相符的一项，然后复测。
 
 #### 1. TUN 模式排除 Tailscale 流量
 ```yaml
@@ -92,7 +99,7 @@ tun:
     - <VPS_IP_1>/32          # 你的代理节点公网物理 IP
 ```
 
-#### 2. 全局关闭 IPv6 虚拟路由残留
+#### 2. 按需调整 DNS / IPv6 配置
 ```yaml
 ipv6: false
 
@@ -101,7 +108,7 @@ dns:
   ipv6: false
   enhanced-mode: fake-ip
   fake-ip-range: 198.18.0.1/16
-  # 切勿开启 fake-ip-range6，否则会注入 2000::/3 导致伪造 IPv6 握手失败
+  # fake-ip-range6 的影响取决于内核和路由配置；先检查实际路由再调整
   fake-ip-filter:
     - "+.ts.net"
     - "*.ts.net"
@@ -112,7 +119,7 @@ dns:
 #### 3. 直连规则前置 (Prepend Rules)
 ```yaml
 prepend-rules:
-  - AND,((NETWORK,udp),(DST-PORT,443)),REJECT  # 拦截 QUIC 避免 UDP 丢包
+  # 仅在 UDP/QUIC 路径已有故障证据时才考虑相应限制
   - PROCESS-NAME,Tailscale,DIRECT
   - PROCESS-NAME,tailscaled,DIRECT
   - PROCESS-NAME,IPNExtension,DIRECT
@@ -126,12 +133,14 @@ prepend-rules:
 
 ---
 
-### 步骤 4：通过 Clash Hosts 静态映射 Tailscale 节点
-查看你的 Tailscale 设备列表：
+### 步骤 4：必要时通过 Clash Hosts 静态映射 Tailscale 节点
+通常优先保留 MagicDNS。只有确认 Clash 无法使用所需解析、且能够维护地址时才考虑静态映射。先查看设备并核验地址：
 ```bash
 tailscale status
+tailscale ip -4 <设备名>
+tailscale ip -6 <设备名>
 ```
-在 Clash 配置文件中注入 `hosts:`（Clash Verge 可在配置增强 `Merge.yaml` 或当前激活 Profile 中添加）：
+确认设备身份、tailnet 和目标地址后，才在 Clash 配置中添加映射（Clash Verge 可在 `Merge.yaml` 或当前激活 Profile 中添加）：
 ```yaml
 hosts:
   "dobby.gleanvo.com": "<VPS_PUBLIC_IP>"
@@ -140,7 +149,7 @@ hosts:
   "dobby.tail4df241.ts.net": "100.105.207.63"
   "dobby": "100.105.207.63"
 ```
-* **效果**：当在浏览器打开 `https://momomac-mini.tail4df241.ts.net/` 时，Clash **0毫秒**直接命中 Hosts 返回内部固定 IP，流量直接送入 Tailscale 虚拟隧道，完全不向外网发 DNS 请求。
+* **注意**：上述域名和地址仅为示例，不可直接照抄。静态地址可能过期；映射只影响解析，不保证路由或服务可达。备份配置，并在节点重命名、退出 tailnet 或地址变化时更新或删除映射。
 
 ---
 
@@ -159,12 +168,10 @@ open -a "Clash Verge"
 
 | 检查项 | 命令 / 方式 | 预期正常输出 |
 | :--- | :--- | :--- |
-| **DNS 劫持状态** | `scutil --dns \| head -n 12` | `resolver #1` 为物理网关或路由器 DNS（如 114.114.114.114），**不存在** `100.100.100.100` |
-| **物理 IPv6 状态** | `networksetup -getinfo Wi-Fi` | 显示 `IPv6: Off` |
-| **Google 访问** | `curl -I https://www.google.com.hk` | `HTTP/2 200 OK` (秒开) |
-| **ChatGPT 访问** | `curl -I https://chatgpt.com/` | `HTTP/2 403 / 200` (Cloudflare 毫秒级建立 TLS，无超时) |
-| **Tailscale 内部域名** | `curl -I https://<NODE>.<TAILNET>.ts.net/` | 正常连通，返回对应内部 HTTP 服务响应 |
-| **Tailscale SSH 连通** | `ssh <NODE_NAME>` | 秒连登录无阻 |
+| **DNS 路径** | `scutil --dns`、`dig <域名>` 与 `dig @<上游> <域名>` | 对照系统 resolver、指定上游和故障域名的返回值；不存在通用“正确 resolver” |
+| **IPv4 / IPv6** | 对同一目标运行 `curl -4` 和 `curl -6` | 分别记录结果、错误和耗时；判断是否仅一条路径异常 |
+| **公网访问** | 访问用户实际报告故障的目标 | 按目标服务可接受的响应码与超时基线判断，不以单一网站状态归因 |
+| **Tailscale 内部域名** | `tailscale status`、`tailscale ip` 与实际服务探测 | 核对设备身份和当前地址，并确认名称解析与服务连通性 |
 
 ---
 
@@ -175,6 +182,7 @@ open -a "Clash Verge"
 # 运行环境体检
 ./scripts/diagnose_and_fix.sh
 
-# 一键自动修复
+# 交互式修复（逐项确认；非交互运行会跳过修改）
 ./scripts/diagnose_and_fix.sh --fix
 ```
+脚本会在对应检测项下显示恢复命令，并在每项系统设置修改前要求确认。它只报告状态，不判断该状态是否就是故障根因；先做 DNS 和 IPv4 / IPv6 对照测试，再决定是否确认。修改后重新验证公网域名、MagicDNS 名称和 tailnet 服务。

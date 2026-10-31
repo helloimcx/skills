@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# diagnose_and_fix.sh - Clash & Tailscale 共存状态体检与一键修复工具
+# diagnose_and_fix.sh - Clash & Tailscale 共存状态诊断与交互式修复
 #
 
 set -e
@@ -22,12 +22,24 @@ if [[ "$1" == "--fix" || "$1" == "-f" ]]; then
     AUTO_FIX=true
 fi
 
+confirm_system_change() {
+    local change="$1"
+    if [[ ! -t 0 ]]; then
+        log_warn "未检测到交互终端；跳过系统修改：$change"
+        return 1
+    fi
+    printf '%s [y/N] ' "$change"
+    local answer
+    read -r answer || return 1
+    [[ "$answer" == "y" || "$answer" == "Y" || "$answer" == "yes" || "$answer" == "YES" ]]
+}
+
 echo -e "${BOLD}====================================================${RESET}"
 echo -e "${BOLD}  Clash & Tailscale 共存状态诊断与修复工具 (macOS)   ${RESET}"
 echo -e "${BOLD}====================================================${RESET}\n"
 
-# 1. 检查 Tailscale 状态与 DNS 接管
-log_info "1. 检查 Tailscale 运行与 DNS 劫持状态..."
+# 1. 检查 Tailscale 运行与系统 DNS resolver
+log_info "1. 检查 Tailscale 运行与系统 DNS resolver..."
 if ! command -v tailscale &>/dev/null; then
     log_warn "未在 PATH 中找到 tailscale 命令，尝试常见路径..."
     TAILSCALE_BIN="/Applications/Tailscale.app/Contents/MacOS/Tailscale"
@@ -40,18 +52,22 @@ if ! "$TAILSCALE_BIN" status &>/dev/null; then
 else
     TS_STATUS=$("$TAILSCALE_BIN" status | head -n 3)
     echo "$TS_STATUS" | sed 's/^/   /'
-    
+
     # 检查 scutil --dns 是否被 Tailscale 抢占为 resolver #1
     FIRST_NS=$(scutil --dns | awk '/resolver #1/{flag=1; next} /resolver #2/{flag=0} flag && /nameserver\[0\]/{print $3; exit}')
     if [[ "$FIRST_NS" == "100.100.100.100" ]]; then
-        log_err "Tailscale 正在接管系统全局 DNS (resolver #1 为 100.100.100.100)！"
-        log_err "➔ 这会导致 GFW 对外网域名明文投毒，触发 ChatGPT/Google 无法访问！"
+        log_warn "系统首选 resolver 是 Tailscale DNS (100.100.100.100)。"
+        log_warn "这只证明当前首选 resolver 是 Tailscale DNS；它本身不能证明公网解析被投毒或是连接故障原因。"
         if [ "$AUTO_FIX" = true ]; then
-            log_info "正在执行修复：禁止 Tailscale 接管系统全局 DNS..."
-            "$TAILSCALE_BIN" set --accept-dns=false
-            log_ok "已执行 tailscale set --accept-dns=false"
+            log_warn "关闭后 MagicDNS 名称可能无法解析。恢复命令：tailscale set --accept-dns=true"
+            if confirm_system_change "要关闭 Tailscale DNS 接管吗？仅在确认 DNS 路径是故障原因后继续。"; then
+                "$TAILSCALE_BIN" set --accept-dns=false
+                log_ok "已执行 tailscale set --accept-dns=false"
+            else
+                log_info "未修改 Tailscale DNS 设置。"
+            fi
         else
-            log_warn "建议修复：运行 $0 --fix 或执行 'tailscale set --accept-dns=false'"
+            log_warn "对照故障域名和 DNS 上游的解析结果后，再评估是否需要调整 Tailscale DNS。"
         fi
     else
         log_ok "Tailscale 未接管全局 DNS (resolver #1 为: $FIRST_NS)"
@@ -66,16 +82,23 @@ WIFI_V6=$(networksetup -getinfo Wi-Fi 2>/dev/null | grep -i "IPv6:" || echo "IPv
 echo "   Wi-Fi $WIFI_V6"
 
 if [[ "$WIFI_V6" =~ "Off" ]]; then
-    log_ok "物理 Wi-Fi IPv6 已关闭（已免疫 Happy Eyeballs GFW 丢包黑洞）。"
+    log_ok "物理 Wi-Fi IPv6 已关闭。"
 else
-    log_warn "物理 Wi-Fi 当前开启了 IPv6！"
-    log_warn "➔ 浏览器（Happy Eyeballs）会优先尝试 IPv6，导致境外网站被 GFW 拦截挂起。"
-    if [ "$AUTO_FIX" = true ]; then
-        log_info "正在执行修复：关闭物理 Wi-Fi 的 IPv6..."
-        networksetup -setv6off Wi-Fi
-        log_ok "已执行 networksetup -setv6off Wi-Fi"
+    log_warn "物理 Wi-Fi IPv6 未关闭；这不能单独证明 IPv6 是连接故障原因。"
+    if [[ "$WIFI_V6" =~ "Automatic" ]]; then
+        if [ "$AUTO_FIX" = true ]; then
+            log_warn "关闭后恢复自动配置的命令：networksetup -setv6automatic Wi-Fi"
+            if confirm_system_change "要临时关闭 Wi-Fi IPv6 吗？仅在 IPv6 路径故障已验证后继续。"; then
+                networksetup -setv6off Wi-Fi
+                log_ok "已执行 networksetup -setv6off Wi-Fi"
+            else
+                log_info "未修改 Wi-Fi IPv6 设置。"
+            fi
+        else
+            log_warn "先用 IPv4/IPv6 分别测试目标站点，确认 IPv6 路径异常后再考虑修改。"
+        fi
     else
-        log_warn "建议修复：运行 $0 --fix 或执行 'networksetup -setv6off Wi-Fi'"
+        log_warn "当前 IPv6 模式不是 Automatic；脚本不会覆盖自定义设置。请先记录现有配置并手动评估。"
     fi
 fi
 
@@ -104,11 +127,11 @@ test_url() {
     local name="$1"
     local url="$2"
     local expected_code="$3"
-    
+
     printf "   %-18s " "测试 $name:"
     local code
     code=$(curl -s -k -o /dev/null -w "%{http_code}" --connect-timeout 4 "$url" 2>/dev/null || echo "FAILED")
-    
+
     if [[ "$code" == "$expected_code" || ( "$name" == "ChatGPT" && ( "$code" == "403" || "$code" == "200" ) ) ]]; then
         echo -e "${GREEN}${code} 正常${RESET}"
     else
