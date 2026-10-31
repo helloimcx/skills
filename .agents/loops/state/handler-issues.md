@@ -1,14 +1,13 @@
 # handler 处置台账
 
-## 快照表（2026-10-28，全量 Open Issues）
+## 快照表（2026-10-31，全量 Open Issues）
 
 | # | 标题 | 状态 | 理由 |
 |---|------|------|------|
 | 30 | [Operator] 报告无法终态化，actions 校验回归导致 Operator 轮永久 RUNNING | OPEN | 等待后续 Handler 轮 |
 | 29 | [code-loop][Operator] discover 定时循环因 Codex 用量额度超限失败，两个项目 discover 已停滞约 42 小时 | OPEN | 等待后续 Handler 轮 |
 | 27 | [vibe-coding] 按项目实际能力约束架构文档同步与 lint:arch 门禁 | OPEN | 等待后续 Handler 轮 |
-| 26 | [code-loop] 修正 Reviewer Skill 与运行时判词、报告格式及人工合并契约不一致 | IN_PROGRESS | 当前 Handler 正在处理 |
-| 25 | [code-loop] 定时处理 PR 验证失败并区分修复归属 | OPEN | 等待后续 Handler 轮 |
+| 25 | [code-loop] 定时处理 PR 验证失败并区分修复归属 | OPEN | PR #37 冲突已解决，等待复审 |
 | 21 | [Operator] 增加模型可用性、调用预算与显式备选模型策略 | OPEN | 等待后续 Handler 轮 |
 | 20 | [Operator] 增加隔离演练模式，验证异常发现、诊断与拟执行动作 | OPEN | 等待后续 Handler 轮 |
 | 19 | [Operator] 增加同类故障聚合、Issue 复用与历史处置经验查询 | OPEN | 等待后续 Handler 轮 |
@@ -24,3 +23,4 @@
 
 - 2026-10-26 / 处理 Issue #26：更新 Reviewer 与运行时契约并增加回归测试；PR 发布后刷新台账状态。
 - 2026-10-28 / 处理 repair:34（PR #34，关联 Issue #26）：补充批准与验证失败报告示例的 CP schema/action 回归覆盖；等待 Handler 修复发布。
+- 2026-10-31 / 处理 repair:37（PR #37，关联 Issue #25）：合并最新 main 并解决台账 add/add 冲突，保留每个 Open Issue 的独立行。

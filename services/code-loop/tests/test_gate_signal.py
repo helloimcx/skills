@@ -42,6 +42,8 @@ class Platform:
     def raw_file(self, path, ref):
         # No repository exam in this fixture: the machine config stands.
         return None
+    def pr_files(self, number):
+        return []
     def find(self, marker, action, payload):
         return next((r for a, p, r in self.writes if marker in p.get('body', '')), None)
     def write(self, action, payload):
@@ -337,6 +339,63 @@ class GateSignalTests(unittest.TestCase):
         self.sync(prs=[self.pr()])
         repair = next(i for i in self.s.store.items() if i['key'] == 'repair:2')
         self.assertEqual(json.loads(repair['payload'])['task'], 'PR_REVIEW_FIX')
+
+    def test_validation_failed_pr_introduced_derives_review_fix(self):
+        e = self.review_round(attribution={'verdict': 'pr-introduced', 'base_tip_sha': 'base1'})
+        self._publish_validation_failed(e)
+        self.sync(prs=[self.pr()])
+        repair = next(i for i in self.store_items('repair:2'))
+        payload = json.loads(repair['payload'])
+        self.assertEqual(payload['task'], 'PR_REVIEW_FIX')
+        self.assertIn('validation_failed', payload['repair_reasons'])
+
+    def test_validation_failed_stale_branch_derives_sync_base(self):
+        e = self.review_round(attribution={'verdict': 'stale-branch', 'base_tip_sha': 'tip2'})
+        self._publish_validation_failed(e)
+        self.sync(base_sha='tip2', prs=[self.pr()])
+        repair = next(i for i in self.store_items('repair:2'))
+        payload = json.loads(repair['payload'])
+        self.assertEqual(payload['task'], 'PR_SYNC_BASE')
+        self.assertNotIn('PR_REVIEW_FIX', payload['task'])
+
+    def test_validation_failed_base_defect_is_frozen_without_pr_repair(self):
+        e = self.review_round(attribution={'verdict': 'base-defect', 'base_tip_sha': 'base1'})
+        self._publish_validation_failed(e)
+        self.sync(base_sha='base1', prs=[self.pr()])
+        self.assertNotIn('repair:2', {i['key'] for i in self.store_items() if i['state'] == 'READY'})
+        self.assertNotIn('review:2', self.ready_keys())
+
+    def test_frozen_validation_preserves_changes_requested_repair(self):
+        e = self.review_round(attribution={'verdict': 'base-defect', 'base_tip_sha': 'base1'})
+        self._publish_validation_failed(e)
+        self._sent_verdict(e['id'], 'Changes requested')
+        self.sync(base_sha='base1', prs=[self.pr()])
+        repair = next(i for i in self.store_items('repair:2') if i['state'] == 'READY')
+        payload = json.loads(repair['payload'])
+        self.assertEqual(payload['task'], 'PR_REVIEW_FIX')
+        self.assertIn('changes_requested', payload['repair_reasons'])
+        self.assertNotIn('validation_failed', payload['repair_reasons'])
+
+    def test_stale_validation_preserves_changes_requested_repair_reason(self):
+        e = self.review_round(attribution={'verdict': 'stale-branch', 'base_tip_sha': 'base1'})
+        self._publish_validation_failed(e)
+        self._sent_verdict(e['id'], 'Changes requested')
+        self.sync(base_sha='base1', prs=[self.pr()])
+        repair = next(i for i in self.store_items('repair:2') if i['state'] == 'READY')
+        payload = json.loads(repair['payload'])
+        self.assertEqual(payload['task'], 'PR_SYNC_BASE')
+        self.assertIn('changes_requested', payload['repair_reasons'])
+        self.assertIn('validation_failed', payload['repair_reasons'])
+
+    def store_items(self, key=None):
+        return [i for i in self.s.store.items() if key is None or i['key'] == key]
+
+    def _publish_validation_failed(self, execution):
+        self.s.report(execution['id'], execution['token'], {
+            'decision': 'Validation failed', 'reviewer': 'w2', 'summary': 'red check',
+            'action': 'review_comment', 'payload': {
+                'number': 2, 'body': 'Validation failed; check failed.'}})
+        self.s.publish(execution['id'], execution['token'])
 
     def test_approved_comment_not_rederived(self):
         e = self.review_round()
