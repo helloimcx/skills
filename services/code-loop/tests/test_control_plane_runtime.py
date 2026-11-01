@@ -186,6 +186,15 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(cfg['state_dir'], str((config_dir / 'state').resolve()))
         # Worktrees default next to the project itself, never into the config home.
         self.assertEqual(cfg['worktree_root'], str((self.repo / '.git-worktrees').resolve()))
+        self.assertIsNone(cfg['max_parallel'])
+
+    def test_explicit_parallel_limit_remains_supported(self):
+        config_dir = self.root / 'code-loop' / 'projects' / 'a__b'
+        config_dir.mkdir(parents=True)
+        target = config_dir / 'control-plane.json'
+        target.write_text(json.dumps({'platform': {'url': 'https://gitea.invalid', 'repo': 'a/b'},
+                                      'max_parallel': 2}))
+        self.assertEqual(2, load_config(target, cwd=str(self.repo))['max_parallel'])
 
     def test_lease_seconds_defaults_to_four_hours_and_enforces_floor(self):
         config_dir = self.root / 'code-loop' / 'projects' / 'a__b'

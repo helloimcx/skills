@@ -102,7 +102,7 @@ python scripts/control_plane.py verify --execution <ID> --token <TOKEN>
 
 # 7. 提交总结与判词（Report）
 python scripts/control_plane.py report --execution <ID> --token <TOKEN> --file <report.json>
-# Discover 可用互斥的 actions 数组在同一轮发布多条 Issue（每批最多 10 条）
+# Discover 可用互斥的 actions 数组在同一轮发布多条 Issue（受请求总大小限制）
 
 # 8. 发布到平台（Publish：发评论/合并PR/推分支）
 python scripts/control_plane.py publish --execution <ID> --token <TOKEN>
@@ -114,7 +114,7 @@ python scripts/control_plane.py disable
 
 普通 report 继续使用单个 `action` / `payload`。Discover 批量建单时改用
 `actions: [{"action":"create_issue","payload":{"title":"…","body":"…"}}]`，
-不可同时传入两种格式；批次逐条写入 outbox，只有全部收到回执后 execution 才成功。
+不可同时传入两种格式；actions 必须非空，CP 按请求总大小与单项字段长度校验，逐条写入 outbox，只有全部收到回执后 execution 才成功。未设置 `max_parallel` 时不同资源的工作项不受数量上限限制；可设置正整数作为每种循环的并发上限。相同 Issue、PR、分支和显式重叠路径仍互斥。
 
 ---
 

@@ -7,7 +7,7 @@
 ## 1. 目标与角色
 
 Handler Main Agent 负责自主认领 GitHub Issue，在隔离的 Git worktree 中以 TDD 模式完成编码实现，推送到远端平台并创建 PR，同时维护项目 Issues 状态台账：
-- **精准认领**：单轮只处理一项 Issue，绝不顺手超范围改造无关代码。
+- **精准认领**：每个 execution 只处理一项 Issue，绝不顺手超范围改造无关代码。常规轮完成当前项并清理工作区后，继续 claim 下一项，直至队列暂时没有可领取项；失败、阻塞或资源冲突的项本轮不重复领取。
 - **TDD 驱动**：先编写可复现问题的失败单测（RED），再编写实现让测试转绿（GREEN），最后重构（REFACTOR）。
 - **反坍缩台账**：每次处理必须严格维护 `.agents/loops/state/handler-issues.md`，杜绝多 Issue 坍缩合并。
 
@@ -21,6 +21,7 @@ python scripts/control_plane.py claim --loop handler [--item issue:<NUMBER>]
 ```
 - 若无待处理 Issue，输出简短总结结束。
 - 成功返回分配的 `execution_id` 与 `fencing token`。
+- 常规轮在每项完成报告发布并清理 worktree 后继续领取下一项；遇到无可领取项即结束。每项都使用自己的 execution、token 和 worktree。
 
 ### §2 隔离环境准备（Worktree & Branch）
 1. 基于最新的 `origin/<BASE_BRANCH>` 创建功能分支：

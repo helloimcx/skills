@@ -96,6 +96,55 @@ PROMPT_RETENTION_SECONDS = 7 * 86400
 SPAWN_LOG = "trigger-spawn.log"
 
 
+def _acquire_state_lock(state_dir):
+    """Serialize trigger evaluations for one project across processes.
+
+    The cursor and spawn decision form one critical section: without a lock,
+    simultaneous scheduler ticks can both read the same unseen issue set and
+    overwrite each other's `seen` updates after launching duplicate sessions.
+    """
+    directory = Path(state_dir)
+    directory.mkdir(parents=True, exist_ok=True)
+    handle = (directory / 'trigger-state.lock').open('a+b')
+    try:
+        if os.name == 'nt':
+            import msvcrt
+            handle.seek(0, os.SEEK_END)
+            if handle.tell() == 0:
+                handle.write(b'0')
+                handle.flush()
+            handle.seek(0)
+            while True:
+                try:
+                    # LK_LOCK gives up after roughly ten retries on Windows;
+                    # retry non-blocking attempts so a slow API call never
+                    # lets a second scheduler overwrite this cursor.
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+                    break
+                except OSError as exc:
+                    if getattr(exc, 'errno', None) not in (13, 36):
+                        raise
+                    time.sleep(0.1)
+        else:
+            import fcntl
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        return handle
+    except Exception:
+        handle.close()
+        raise
+
+
+def _release_state_lock(handle):
+    if os.name == 'nt':
+        import msvcrt
+        handle.seek(0)
+        msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+    else:
+        import fcntl
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+    handle.close()
+
+
 def _round_claim_fields(round_claim):
     """Validate the prepared-round handoff values before they reach a prompt.
     They are machine-local runtime facts, but a malformed one is a programming
@@ -352,9 +401,9 @@ def load_triggers(path):
         if (not isinstance(prefixes, list) or not prefixes
                 or not all(isinstance(x, str) and x for x in prefixes)):
             raise ValueError('INVALID_CONFIG: title_prefix_any')
-    for key, default in (('cooldown_minutes', 30), ('max_rounds_per_day', 12)):
+    for key, default in (('cooldown_minutes', 0), ('max_rounds_per_day', 0)):
         value = cfg.get(key, default)
-        if not isinstance(value, (int, float)) or isinstance(value, bool) or value <= 0:
+        if not isinstance(value, (int, float)) or isinstance(value, bool) or value < 0:
             raise ValueError('INVALID_CONFIG: ' + key)
         cfg[key] = value
     spawn = cfg.get('spawn', {})
@@ -534,6 +583,7 @@ def run(cfg_path, mode='run', dry_run=False, now=None, github_factory=None,
         gitea_factory=None):
     """One deterministic trigger evaluation; never raises, returns a decision."""
     state_dir = None
+    state_lock = None
     try:
         if mode not in ('check', 'run'):
             raise ValueError('UNKNOWN_MODE')
@@ -542,6 +592,7 @@ def run(cfg_path, mode='run', dry_run=False, now=None, github_factory=None,
         cp_path = Path(str(cfg_path)).expanduser().resolve().parent / 'control-plane.json'
         cp_cfg = (config_provider or _load_cp_config)(cp_path, cfg['repo_cwd'])
         state_dir = Path(cp_cfg['state_dir'])
+        state_lock = _acquire_state_lock(state_dir)
         state, fresh = load_state(state_dir)
         if state is None:
             state = {'seen': {}, 'last_fired': 0.0,
@@ -552,7 +603,7 @@ def run(cfg_path, mode='run', dry_run=False, now=None, github_factory=None,
             log_decision(state_dir, now, decision)
             return decision
 
-        if now - state['last_fired'] < cfg['cooldown_minutes'] * 60:
+        if cfg['cooldown_minutes'] and now - state['last_fired'] < cfg['cooldown_minutes'] * 60:
             return finish(_decision('SKIPPED_COOLDOWN', reason='cooldown window'))
         status = (service_factory or (lambda c: Service(c)))(cp_cfg).status()
         if not status.get('enabled'):
@@ -569,10 +620,9 @@ def run(cfg_path, mode='run', dry_run=False, now=None, github_factory=None,
             return finish(_decision('SKIPPED_BOOTSTRAP', matched, 'cursor primed'))
         if not matched:
             return finish(_decision('SKIPPED_NO_MATCH', reason='no new matching issue'))
-        if (status.get('executions') or {}).get('RUNNING', 0):
-            # Busy is temporary: seen stays clean so a later tick can fire.
-            return finish(_decision('SKIPPED_BUSY', matched, 'cp execution running'))
-        if state['fired_date'] == day_key(now) and state['fired_count'] >= cfg['max_rounds_per_day']:
+        if (cfg['max_rounds_per_day']
+                and state['fired_date'] == day_key(now)
+                and state['fired_count'] >= cfg['max_rounds_per_day']):
             return finish(_decision('SKIPPED_DAILY_CAP', matched, 'daily cap reached'))
         prompt = cfg['spawn']['prompt_template'].format(
             rules_doc=cfg['rules_doc'], entry_doc=cfg['entry_doc'])
@@ -598,6 +648,9 @@ def run(cfg_path, mode='run', dry_run=False, now=None, github_factory=None,
                     'reason': '%s: %s' % (type(exc).__name__, exc)}
         log_decision(state_dir, time.time(), decision)
         return decision
+    finally:
+        if state_lock is not None:
+            _release_state_lock(state_lock)
 
 
 def main(argv=None, **deps):

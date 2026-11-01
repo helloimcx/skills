@@ -488,7 +488,7 @@ def validate_report(service, e, item, payload, eid, result):
         if 'action' in result or 'payload' in result:
             raise ValueError('ACTION_FIELDS_MUTUALLY_EXCLUSIVE')
         actions = result['actions']
-        if item['kind'] != 'discover' or not isinstance(actions, list) or not 2 <= len(actions) <= 10:
+        if item['kind'] != 'discover' or not isinstance(actions, list) or not actions:
             raise ValueError('INVALID_ACTIONS')
         if result['decision'] != 'CONFIRMED':
             raise ValueError('CONFIRMED_REQUIRED')
