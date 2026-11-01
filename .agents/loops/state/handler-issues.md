@@ -1,9 +1,10 @@
 # handler 处置台账
 
-## 快照表（2026-11-01，全量 Open Issues）
+## 快照表（2026-11-02，全量 Open Issues）
 
 | # | 标题 | 状态 | 理由 |
 |---|------|------|------|
+| 41 | [❓needs-human] loop_stall 默认阈值 7.5h 与每日自动化节奏不匹配 — handler/discover 每日误报并空耗 Operator 轮次 | OPEN | 等待后续 Handler 轮 |
 | 30 | [Operator] 报告无法终态化，actions 校验回归导致 Operator 轮永久 RUNNING | OPEN | 等待后续 Handler 轮 |
 | 29 | [code-loop][Operator] discover 定时循环因 Codex 用量额度超限失败，两个项目 discover 已停滞约 42 小时 | OPEN | 等待后续 Handler 轮 |
 | 27 | [vibe-coding] 按项目实际能力约束架构文档同步与 lint:arch 门禁 | OPEN | 等待后续 Handler 轮 |
@@ -25,3 +26,4 @@
 - 2026-10-28 / 处理 repair:34（PR #34，关联 Issue #26）：补充批准与验证失败报告示例的 CP schema/action 回归覆盖；等待 Handler 修复发布。
 - 2026-10-31 / 处理 repair:37（PR #37，关联 Issue #25）：合并最新 main 并解决台账 add/add 冲突，保留每个 Open Issue 的独立行。
 - 2026-11-01 / 处理 repair:38（PR #38）：响应 reviewer 对 Clash / Tailscale 文档与修复脚本的变更请求；PR #38 等待发布结果。
+- 2026-11-02 / 处理 repair:38（PR #38）：保留 TLS 校验并将固定站点探测改为非判定性示例，显示 HTTP 状态和传输错误。

@@ -186,3 +186,4 @@ open -a "Clash Verge"
 ./scripts/diagnose_and_fix.sh --fix
 ```
 脚本会在对应检测项下显示恢复命令，并在每项系统设置修改前要求确认。它只报告状态，不判断该状态是否就是故障根因；先做 DNS 和 IPv4 / IPv6 对照测试，再决定是否确认。修改后重新验证公网域名、MagicDNS 名称和 tailnet 服务。
+脚本末尾的 Google、ChatGPT 和 YouTube 请求只是固定示例，不代表用户的目标服务，也不构成网络正常或异常的结论。探测保留 TLS 证书校验，并显示实际 HTTP 状态；遇到传输错误时显示 curl 错误。排查具体故障时，以用户报告的目标和该服务预期响应为准。

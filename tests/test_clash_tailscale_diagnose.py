@@ -11,6 +11,41 @@ SCRIPT = (Path(__file__).parents[1] / "clash-tailscale-coexist/scripts/diagnose_
 
 
 class DiagnoseFixSafetyTests(unittest.TestCase):
+    def test_connectivity_probes_preserve_tls_and_report_observations_without_verdicts(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            bin_dir = root / "bin"
+            bin_dir.mkdir()
+            calls = root / "curl-args"
+            self._stub(bin_dir, "tailscale", "#!/bin/sh\nexit 1\n")
+            self._stub(bin_dir, "networksetup", "#!/bin/sh\necho 'IPv6: Automatic'\n")
+            self._stub(bin_dir, "ifconfig", "#!/bin/sh\nexit 0\n")
+            self._stub(bin_dir, "netstat", "#!/bin/sh\nexit 0\n")
+            self._stub(bin_dir, "curl", f'''#!/bin/sh
+echo "$*" >> "{calls}"
+case "$*" in
+  *chatgpt.com*) echo 'curl: (7) connection refused' >&2; printf '000'; exit 7 ;;
+esac
+printf '503'
+''')
+
+            env = os.environ.copy()
+            env["PATH"] = f"{bin_dir}:{env['PATH']}"
+            process = subprocess.run(
+                ["bash", str(SCRIPT)], capture_output=True, text=True, env=env, timeout=10
+            )
+
+            self.assertEqual(process.returncode, 0, process.stderr)
+            self.assertEqual(len(calls.read_text(encoding="utf-8").splitlines()), 3)
+            for args in calls.read_text(encoding="utf-8").splitlines():
+                self.assertNotIn(" -k ", f" {args} ", "probes must validate TLS certificates")
+            self.assertIn("仅显示观测结果", process.stdout)
+            self.assertIn("HTTP 503", process.stdout)
+            self.assertIn("curl exit 7", process.stdout)
+            self.assertIn("connection refused", process.stdout)
+            self.assertNotIn("503 正常", process.stdout)
+            self.assertNotIn("503 异常", process.stdout)
+
     def test_fix_requires_explicit_confirmation_and_prints_rollback(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

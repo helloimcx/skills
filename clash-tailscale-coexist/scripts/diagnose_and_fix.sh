@@ -121,27 +121,35 @@ fi
 echo ""
 
 # 4. 关键连通性实测
-log_info "4. 真实网络连通性测试..."
+log_info "4. 固定站点示例探测（仅显示观测结果，不判定用户网络正常或异常）..."
 
 test_url() {
     local name="$1"
     local url="$2"
-    local expected_code="$3"
 
     printf "   %-18s " "测试 $name:"
-    local code
-    code=$(curl -s -k -o /dev/null -w "%{http_code}" --connect-timeout 4 "$url" 2>/dev/null || echo "FAILED")
-
-    if [[ "$code" == "$expected_code" || ( "$name" == "ChatGPT" && ( "$code" == "403" || "$code" == "200" ) ) ]]; then
-        echo -e "${GREEN}${code} 正常${RESET}"
+    local code error_file curl_status curl_error
+    error_file=$(mktemp)
+    if code=$(curl -sS -o /dev/null -w "%{http_code}" --connect-timeout 4 "$url" 2>"$error_file"); then
+        curl_status=0
     else
-        echo -e "${RED}${code} 异常 (超时或未连通)${RESET}"
+        curl_status=$?
+    fi
+    curl_error=$(cat "$error_file")
+    rm -f "$error_file"
+
+    if [[ "$curl_status" -eq 0 ]]; then
+        echo -e "HTTP ${code:-000}（示例观测；请按目标服务的预期自行判断）"
+    else
+        echo -e "HTTP ${code:-000}；curl exit ${curl_status}；${curl_error:-未提供错误详情}"
     fi
 }
 
-test_url "Google" "https://www.google.com.hk" "200"
-test_url "ChatGPT" "https://chatgpt.com/" "403"
-test_url "YouTube" "https://www.youtube.com" "200"
+# These public URLs are examples only. Their availability and response codes
+# vary by region and policy; probe the user's actual target when diagnosing.
+test_url "Google" "https://www.google.com.hk"
+test_url "ChatGPT" "https://chatgpt.com/"
+test_url "YouTube" "https://www.youtube.com"
 
 echo ""
 echo -e "${BOLD}诊断完成！${RESET}"
