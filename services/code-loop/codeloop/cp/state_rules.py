@@ -478,7 +478,7 @@ DOCUMENTED_CODES = {
     'BATCH_ACTION_FORBIDDEN': '批量发布只允许 create_issue',
     'BATCH_PAYLOAD_TOO_LARGE': '批量发布总载荷限制大小，避免超出报告存储边界',
     'DUPLICATE_BATCH_ISSUE': '同一批次不能发布重复标题/正文的 Issue',
-    'INVALID_ACTIONS': '批量 actions 必须是 2 至 10 项的列表',
+    'INVALID_ACTIONS': 'Discover actions 必须是非空列表',
     'INVALID_ACTION_ENTRY': '批量动作项必须只含 action/payload 且形状有效',
     'INVALID_ACTION_INDEX': 'Worker 只能请求当前报告中存在的批量动作索引',
     'INVALID_ISSUE_BODY_LENGTH': 'Issue 正文必须在平台允许长度内',

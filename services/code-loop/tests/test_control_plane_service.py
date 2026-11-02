@@ -26,6 +26,43 @@ from codeloop.cp.service import Service
 from _service_test_base import Platform, git, ServiceTestsBase
 
 class ServiceTests(ServiceTestsBase):
+    def test_unlimited_parallel_claims_are_supported(self):
+        self.s.cfg['max_parallel'] = None
+        self.s.sync()
+        for number in range(1, 6):
+            self.s.store.put_item('review:%s' % number, 'reviewer', 'v1',
+                                  {'pr': number}, ['pr-%s' % number])
+        claims = [self.s.claim('reviewer', 'worker-%s' % number)
+                  for number in range(1, 6)]
+        self.assertEqual(5, len([claim for claim in claims if claim]))
+
+    def test_handler_defaults_to_object_locks_and_honors_explicit_paths(self):
+        self.platform.data['issues'] = [self.issue(),
+                                        dict(self.issue(), number=3, title='[Content] second')]
+        self.s.sync()
+        items = [item for item in self.s.store.items('handler')
+                 if item['state'] == 'READY']
+        self.assertEqual(2, len(items))
+        self.assertTrue(all(not any(r.startswith('path:') for r in json.loads(item['resources']))
+                            for item in items))
+        first = self.s.claim('handler', 'worker-1', item_id='issue:1')
+        second = self.s.claim('handler', 'worker-2', item_id='issue:3')
+        self.assertIsNotNone(first)
+        self.assertIsNotNone(second)
+
+        scoped, platform = self._fresh({'issue_scopes': {'1': ['src/core'],
+                                                          '3': ['src/core']}})
+        platform.data['issues'] = [self.issue(),
+                                   dict(self.issue(), number=3, title='[Content] second')]
+        scoped.sync()
+        scoped_items = [item for item in scoped.store.items('handler')
+                        if item['state'] == 'READY']
+        self.assertTrue(all('path:src/core' in json.loads(item['resources'])
+                            for item in scoped_items))
+        claim = scoped.claim('handler', 'scoped-1', item_id='issue:1')
+        self.assertIsNotNone(claim)
+        self.assertIsNone(scoped.claim('handler', 'scoped-2', item_id='issue:3'))
+
     def test_claim_requires_machine_enable_marker(self):
         self.s.sync()
         self.assertEqual(len(self.s.store.items('discover')), 1)

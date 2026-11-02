@@ -27,7 +27,8 @@ class CliTests(unittest.TestCase):
             config = root / "control-plane.json"
             config.write_text(json.dumps({
                 "state_dir": str(root / "state"), "worktree_root": str(root / "trees"),
-                "base": "main", "platform": {"url": "http://127.0.0.1:1", "repo": "a/b"},
+                "base": "main",
+                "platform": {"url": "http://127.0.0.1:1", "repo": "a/b"},
             }), encoding="utf-8")
             script = Path(__file__).resolve().parents[1] / "scripts" / "control_plane.py"
             cmd = [sys.executable, str(script), "--config", str(config)]
@@ -68,7 +69,8 @@ class CliTests(unittest.TestCase):
             config = root / "control-plane.json"
             config.write_text(json.dumps({
                 "state_dir": str(root / "state"), "worktree_root": str(root / "trees"),
-                "base": "main", "platform": {"url": "http://127.0.0.1:1", "repo": "a/b"},
+                "base": "main",
+                "platform": {"url": "http://127.0.0.1:1", "repo": "a/b"},
             }), encoding="utf-8")
             script = Path(__file__).resolve().parents[1] / "scripts" / "control_plane.py"
             proc = subprocess.run([sys.executable, str(script), "--config", str(config),
@@ -151,7 +153,8 @@ class ClaimBlockedByTests(unittest.TestCase):
             config = root / "control-plane.json"
             config.write_text(json.dumps({
                 "state_dir": str(root / "state"), "worktree_root": str(root / "trees"),
-                "base": "main", "platform": {"url": "http://127.0.0.1:1", "repo": "a/b"},
+                "base": "main", "max_parallel": 3,
+                "platform": {"url": "http://127.0.0.1:1", "repo": "a/b"},
             }), encoding="utf-8")
             env = dict(os.environ, CODE_LOOP_HOME=str(root))
             previous = os.environ.get("CODE_LOOP_HOME")

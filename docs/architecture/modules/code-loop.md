@@ -6,6 +6,12 @@
 
 The Control Plane owns project coordination, project command ledgers, machine task ledgers, leases and platform publication. The dashboard derives views from collected facts; action callbacks own collection, replies and command dispatch. `cp.observer` supplies the shared platform snapshot store.
 
+### Three-loop scheduling and concurrency
+
+`discover`, `handler` and `reviewer` use one execution and fencing token per claimed item. Normal Handler and Reviewer rounds may continue claiming after the current item has been published and its worktree cleaned. The default `max_parallel: null` leaves concurrency bounded by actual resource locks; a positive configured integer restores a per-loop slot limit. Issue implementations and PR repairs lock their Issue, PR and branch identities. Repository path locks apply only to scopes declared in `issue_scopes`; unrelated work can run in independent worktrees, while Git reports later merge conflicts. Dashboard-targeted rounds keep the selected PR scope.
+
+Discover keeps one aggregate scan item for each discovery window. Its report may contain any non-empty number of issue actions within the existing request and field byte limits. Each action gets an independent outbox identity and publication receipt, so partial batches resume without repeating sent work. Event triggers default to no cooldown or daily round cap and do not wait for all other loops to become idle; a per-project file lock serializes cursor checks and spawn decisions across scheduler processes. Positive per-trigger settings remain an opt-in rate limit.
+
 ### Operator, WorkerAgent, Coordinator and Handler
 
 - **Operator** is the CP-side global operations coordinator. It consumes durable events across exposed projects and workers, routes authorized typed tasks, and tracks their results. It does not start a worker's local runtime.

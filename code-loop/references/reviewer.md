@@ -19,7 +19,7 @@ Reviewer 不得合并 PR、推送主分支或将批准表述为自动合并授�
 
 ## 2. 标准审查生命周期
 
-1. 使用 `python scripts/control_plane.py claim --loop reviewer [--item review:<PR_NUMBER>]` 领取单个 PR。无结果时结束本轮。
+1. 使用 `python scripts/control_plane.py claim --loop reviewer [--item review:<PR_NUMBER>]` 领取 PR。常规轮每次处理一个 PR，完成发布并清理 worktree 后继续领取，直至队列暂时为空；失败或受阻的 PR 本轮不重复领取。带 `--item` 的定向轮只处理指定 PR。
 2. 按 CP 配置准备独立 worktree，并用 `bind --execution <ID> --token <TOKEN> --worktree <PATH>` 绑定。
 3. 检查 PR diff、架构约束、测试覆盖和 `.code-loop/verify.json`。不得降低或修改门禁来取得通过。
 4. 运行 `python scripts/control_plane.py verify --execution <ID> --token <TOKEN>`。报告必须对应当前 PR head 和本轮验证结果。
@@ -89,7 +89,7 @@ python scripts/control_plane.py publish --execution <EXECUTION_ID> --token <TOKE
 
 ## 4. 定向评审与冲突
 
-看板已完成准备与绑定（`PREPARED` 态）时，不得重复 claim 或 bind；从 diff 审查和 CP verify 开始。每轮仅处理指定 PR。
+看板已完成准备与绑定（`PREPARED` 态）时，不得重复 claim 或 bind；从 diff 审查和 CP verify 开始。该定向轮仅处理指定 PR。普通轮可在逐项完成并清理工作区后继续领取其他 PR。
 
 PR 与 base 冲突时，不得批准。将冲突细节和受影响文件写入评审结果并请求作者解决；冲突修复由 PR 作者或 Handler 单独完成。Reviewer 不修改 PR 分支。
 

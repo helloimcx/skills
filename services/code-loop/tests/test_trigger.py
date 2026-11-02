@@ -2,9 +2,11 @@
 import contextlib
 import io
 import json
+import multiprocessing
 import os
 import shutil
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -18,6 +20,15 @@ for _p in (str(_Path(__file__).resolve().parents[1]),
         _sys.path.insert(0, _p)
 
 from codeloop import trigger
+
+
+def hold_trigger_state_lock(state_dir, acquired, release):
+    lock = trigger._acquire_state_lock(state_dir)
+    try:
+        acquired.set()
+        release.wait(10)
+    finally:
+        trigger._release_state_lock(lock)
 
 NOW = 1_700_000_000.0
 TODAY = trigger.day_key(NOW)
@@ -116,8 +127,8 @@ class Harness(unittest.TestCase):
 class ConfigTests(Harness):
     def test_defaults_applied(self):
         cfg = trigger.load_triggers(self.cfg())
-        self.assertEqual(30, cfg['cooldown_minutes'])
-        self.assertEqual(12, cfg['max_rounds_per_day'])
+        self.assertEqual(0, cfg['cooldown_minutes'])
+        self.assertEqual(0, cfg['max_rounds_per_day'])
         self.assertEqual(["claude", "-p", "--dangerously-skip-permissions"],
                          cfg['spawn']['command'])
         self.assertIn('{rules_doc}', cfg['spawn']['prompt_template'])
@@ -210,9 +221,50 @@ class MatchAndStateTests(Harness):
 
 
 class GuardTests(Harness):
+    def test_trigger_state_lock_serializes_concurrent_ticks(self):
+        acquired = trigger._acquire_state_lock(self.state_dir)
+        entered = threading.Event()
+
+        def contend():
+            lock = trigger._acquire_state_lock(self.state_dir)
+            try:
+                entered.set()
+            finally:
+                trigger._release_state_lock(lock)
+
+        thread = threading.Thread(target=contend)
+        thread.start()
+        try:
+            self.assertFalse(entered.wait(0.05))
+        finally:
+            trigger._release_state_lock(acquired)
+        self.assertTrue(entered.wait(2))
+        thread.join(2)
+        self.assertFalse(thread.is_alive())
+
+    def test_trigger_state_lock_serializes_processes(self):
+        ctx = multiprocessing.get_context('spawn')
+        first_acquired, second_acquired, release = (ctx.Event(), ctx.Event(), ctx.Event())
+        first = ctx.Process(target=hold_trigger_state_lock,
+                            args=(str(self.state_dir), first_acquired, release))
+        second = ctx.Process(target=hold_trigger_state_lock,
+                             args=(str(self.state_dir), second_acquired, release))
+        first.start()
+        try:
+            self.assertTrue(first_acquired.wait(5))
+            second.start()
+            self.assertFalse(second_acquired.wait(0.2))
+        finally:
+            release.set()
+        self.assertTrue(second_acquired.wait(5))
+        first.join(5)
+        second.join(5)
+        self.assertEqual(0, first.exitcode)
+        self.assertEqual(0, second.exitcode)
+
     def test_cooldown_blocks_before_network(self):
         self.write_state(last_fired=NOW - 60)
-        decision = self.fire(fail_if_called=True)
+        decision = self.fire(fail_if_called=True, cfg_over={'cooldown_minutes': 30})
         self.assertEqual('SKIPPED_COOLDOWN', decision['event'])
 
     def test_not_enabled_blocks_before_network(self):
@@ -220,32 +272,37 @@ class GuardTests(Harness):
         decision = self.fire(fail_if_called=True)
         self.assertEqual('SKIPPED_NOT_ENABLED', decision['event'])
 
-    def test_busy_skips_and_keeps_seen_clean_for_retry(self):
+    def test_unrelated_running_execution_does_not_block_trigger(self):
         self.gitea = FakeGitea([plain_issue(7, '[BUG] x')])
         self.service = FakeService(running=1)
         decision = self.fire()
-        self.assertEqual('SKIPPED_BUSY', decision['event'])
+        self.assertEqual('SPAWNED_DRYRUN', decision['event'])
         self.assertEqual([7], decision['matched_numbers'])
-        self.assertEqual({}, self.read_state()['seen'])
-        self.service = FakeService()
-        self.assertEqual('SPAWNED_DRYRUN', self.fire()['event'])
+        self.assertIn('1007', self.read_state()['seen'])
 
     def test_daily_cap_after_match(self):
         self.write_state(fired_count=12)
         self.gitea = FakeGitea([plain_issue(7, '[BUG] x')])
-        decision = self.fire()
+        decision = self.fire(cfg_over={'max_rounds_per_day': 12})
         self.assertEqual('SKIPPED_DAILY_CAP', decision['event'])
 
-    def test_busy_reported_before_daily_cap(self):
+    def test_default_trigger_has_no_daily_cap(self):
         self.write_state(fired_count=12)
         self.gitea = FakeGitea([plain_issue(7, '[BUG] x')])
         self.service = FakeService(running=1)
-        self.assertEqual('SKIPPED_BUSY', self.fire()['event'])
+        self.assertEqual('SPAWNED_DRYRUN', self.fire()['event'])
 
     def test_daily_counter_resets_next_day(self):
         self.write_state(fired_count=12, fired_date='2000-01-01')
         self.gitea = FakeGitea([plain_issue(7, '[BUG] x')])
         self.assertEqual('SPAWNED_DRYRUN', self.fire()['event'])
+
+    def test_explicit_daily_cap_still_applies_when_an_execution_is_running(self):
+        self.write_state(fired_count=12)
+        self.gitea = FakeGitea([plain_issue(7, '[BUG] x')])
+        self.service = FakeService(running=1)
+        self.assertEqual('SKIPPED_DAILY_CAP', self.fire(
+            cfg_over={'max_rounds_per_day': 12})['event'])
 
     def test_api_failure_is_error_and_cursor_untouched(self):
         self.gitea = FakeGitea(RuntimeError('boom'))

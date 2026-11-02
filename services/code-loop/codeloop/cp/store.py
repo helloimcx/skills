@@ -33,7 +33,7 @@ def _json(value):
 
 def _resources(values):
     if not isinstance(values, list) or not values:
-        raise ValueError('resources must be a non-empty list (use path:* for unknown scope)')
+        raise ValueError('resources must be a non-empty list')
     result = []
     for value in values:
         if not isinstance(value, str) or not value or '\\' in value or '\x00' in value:
@@ -411,7 +411,9 @@ class Store(CommandStore):
 
     def claim(self, kind, worker, ttl=1800, limit=3, item_id=None):
         self._ttl(ttl)
-        if not isinstance(worker, str) or not worker or isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
+        if (not isinstance(worker, str) or not worker
+                or (limit is not None and (isinstance(limit, bool)
+                    or not isinstance(limit, int) or limit < 1))):
             raise ValueError('worker and positive integer limit are required')
         now = time.time()
         created_locks = []
@@ -528,6 +530,8 @@ class Store(CommandStore):
         """Holder snapshot when the kind's parallel slots are full, else None.
         Expired leases are not capacity and never appear; live leases are not
         stealable, so the snapshot only tells the caller who until when."""
+        if limit is None:
+            return None
         holders = [row for row in active
                    if row['kind'] == kind and row['expires_at'] > now]
         if len(holders) < limit:
