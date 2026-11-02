@@ -123,6 +123,8 @@ def _validate_numeric(cfg):
                 'verify_timeout', 'baseline_window_seconds', 'baseline_max_candidates',
                 'gate_repair_max_attempts', 'blocked_probe_seconds',
                 'blocked_lookback_seconds'):
+        if key == 'max_parallel' and cfg[key] is None:
+            continue
         if not isinstance(cfg[key], (int, float)) or isinstance(cfg[key], bool) or cfg[key] <= 0:
             raise ValueError('INVALID_CONFIG: ' + key)
     if cfg['lease_seconds'] < 3600:
@@ -190,7 +192,9 @@ def _load_coordinator_config(cfg, config_dir):
     cfg.setdefault('interpreter', None)
     cfg.setdefault('required_checks', [])
     cfg.setdefault('lease_seconds', 14400)
-    cfg.setdefault('max_parallel', 3)
+    # None means only resource conflicts limit concurrent executions.
+    # Positive values remain available as an explicit per-loop ceiling.
+    cfg.setdefault('max_parallel', None)
     cfg.setdefault('orphan_idle_seconds', 7200)
     cfg.setdefault('snapshot_ttl', 300)
     cfg.setdefault('discovery_window_seconds', 10800)

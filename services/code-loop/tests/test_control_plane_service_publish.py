@@ -245,6 +245,19 @@ class ServicePublishTests(ServiceTestsBase):
                 'action': 'create_issue', 'payload': {'body': 'missing title'}})
         self.assertEqual(self.s.store.db.execute('SELECT COUNT(*) FROM outbox').fetchone()[0], 0)
 
+    def test_discover_batch_accepts_more_than_ten_issues(self):
+        self.s.sync()
+        e = self.s.claim('discover', 'inspector')
+        report = self._batch_report()
+        report['actions'] = [
+            {'action': 'create_issue', 'payload': {
+                'title': '[Content] issue %s' % i, 'body': 'evidence %s' % i}}
+            for i in range(12)]
+        self.s.report(e['id'], e['token'], report)
+        result = self.s.publish(e['id'], e['token'])
+        self.assertEqual(12, len(result['issues']))
+        self.assertEqual(12, len(self.platform.writes))
+
     def test_publish_adds_identity_signature_for_each_kind(self):
         # discover: create_issue (no verification gate)
         s, p = self._fresh({})

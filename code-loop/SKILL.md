@@ -46,8 +46,8 @@ description: 本地确定性自动化研发闭环（Control Plane 协调器、Gi
 3. **考题唯一源（`.code-loop/verify.json`）**：验证门禁标准存放在目标项目根目录下，且**锁定读取 base commit**，杜绝 PR 分支自行降低门禁标尺。
 4. **三大研发循环**：
    - `discover`：定时盘点平台事实，识别新 Issues / PRs 并入队。
-   - `handler`：认领 Issue，在独立 worktree 中以 TDD 实现，提 PR 并维护反坍缩台账。
-   - `reviewer`：认领 PR，执行隔离门禁验证与覆盖率检查，提交 LGTM / BLOCKED / FAILED 判词并调度合并。
+   - `handler`：逐项认领 Issue，在独立 worktree 中以 TDD 实现，提 PR 并维护反坍缩台账；每项完成并清理后继续处理队列中的下一项。
+   - `reviewer`：逐项认领 PR，在隔离 worktree 中执行门禁验证与覆盖度检查，向 CP 报告 `Approved for manual merge` / `Changes requested` / `Blocked` / `Validation failed`；普通轮可继续处理其他 PR，批准后仍由有权限的人手工合并。
 5. **Operator 自治与分级升级**：基于 `operator.md` 白名单执行 WAL 检查点、状态采集刷新与未决重发；严重问题自动向 GitHub 提交 Issue 升级。
 
 ---
@@ -119,7 +119,7 @@ Skill 的 `scripts/` 目录提供路径稳定的委托 CLI 入口（自动路由
    python scripts/control_plane.py sync
    ```
 2. **检查并核对问题**：检查仓库代码和近期变更，结合同步到的开放 Issues/PRs，找出有明确证据、尚未被已有工作覆盖的问题；不得把猜测或纯偏好包装成缺陷。
-3. **创建 Issue 或记录结论**：每轮可创建多个优先级较高、证据充分且去重后的 GitHub Issues（CP 每批上限 10 条）。先 `claim --loop discover`，再按 `references/discover.md` 使用 CP `report` / `publish` 发布；无合适问题时报告结论，不创建 Issue。
+3. **创建 Issue 或记录结论**：每轮可创建多个优先级较高、证据充分且去重后的 GitHub Issues（CP 以请求总大小和字段长度限制批次）。先 `claim --loop discover`，再按 `references/discover.md` 使用 CP `report` / `publish` 发布；无合适问题时报告结论，不创建 Issue。
 4. **检查队列**：确认新 Issue 已同步为 handler 队列项，并汇报 Issue 编号或未创建的客观原因。Discover 只检查和发布 Issue，不修改仓库代码，也不领取 handler/reviewer 项。
 
 ### D. Operator 轮（监控巡检与自愈升级）
