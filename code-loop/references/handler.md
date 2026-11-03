@@ -7,7 +7,7 @@
 ## 1. 目标与角色
 
 Handler Main Agent 负责自主认领 GitHub Issue，在隔离的 Git worktree 中以 TDD 模式完成编码实现，推送到远端平台并创建 PR，同时维护项目 Issues 状态台账：
-- **精准认领**：单轮只处理一项 Issue，绝不顺手超范围改造无关代码。
+- **精准认领**：每个 execution 只处理一项 Issue，绝不顺手超范围改造无关代码。常规轮完成当前项并清理工作区后，继续 claim 下一项，直至队列暂时没有可领取项；失败、阻塞或资源冲突的项本轮不重复领取。
 - **TDD 驱动**：先编写可复现问题的失败单测（RED），再编写实现让测试转绿（GREEN），最后重构（REFACTOR）。
 - **反坍缩台账**：每次处理必须严格维护 `.agents/loops/state/handler-issues.md`，杜绝多 Issue 坍缩合并。
 
@@ -21,6 +21,7 @@ python scripts/control_plane.py claim --loop handler [--item issue:<NUMBER>]
 ```
 - 若无待处理 Issue，输出简短总结结束。
 - 成功返回分配的 `execution_id` 与 `fencing token`。
+- 常规轮在每项完成报告发布并清理 worktree 后继续领取下一项；遇到无可领取项即结束。每项都使用自己的 execution、token 和 worktree。
 
 ### §2 隔离环境准备（Worktree & Branch）
 1. 基于最新的 `origin/<BASE_BRANCH>` 创建功能分支：
@@ -44,6 +45,15 @@ python scripts/control_plane.py claim --loop handler [--item issue:<NUMBER>]
 python scripts/control_plane.py verify --execution <EXECUTION_ID> --token <TOKEN>
 ```
 确保全量测试、代码风格和静态检查 100% 通过。
+
+### PR 验证失败的归属
+
+`repair:<PR>` 可能是 `PR_REVIEW_FIX`，也可能是基线同步/冲突修复。处理 `repair_reasons=validation_failed` 时，先阅读本次验证证据和 PR 评论，确认失败属于哪一侧，再决定是否编辑 PR 分支：
+
+- 若相同失败在 PR head 复现、在基线通过，按 `PR_REVIEW_FIX` 最小修复 PR，并保留失败用例与验证证据。
+- 若失败在 PR 的分叉点复现、在当前基线通过，按 `PR_SYNC_BASE` 合并当前基线并验证，不把无关基线改动塞进 PR 修复。
+- 若当前基线也复现，或验证环境本身故障，不编辑 PR 分支。保留可复现命令、失败摘要和 head/base SHA，在报告及 PR 评论中说明归属；基线问题进入独立基线/门禁处理，环境问题等待门禁恢复。
+- 证据不能区分归属时，报告 `BLOCKED` 并在 PR 留下具体证据和所需下一步，不猜测修复归属。
 
 ### §5 推送分支与创建 PR
 1. 将提交推送到远端仓库：
