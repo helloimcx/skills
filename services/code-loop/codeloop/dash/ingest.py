@@ -4,7 +4,9 @@ All writes go through apply_snapshot / replace_runtime so collectors stay
 declarative: content-hash diff upsert for platform objects, wholesale
 replacement for the small mutable control-plane runtime tables.
 """
+import hashlib
 import json
+from decimal import Decimal, InvalidOperation
 
 from .. import agent_runners
 from .schema import LINK_RE, _hash
@@ -241,23 +243,158 @@ RUNTIME_TABLES = {
 
 
 def replace_runtime(db, pid, runtime):
-    """Replace all control-plane runtime rows of one project (small, mutable)."""
-    with db:
-        for table in RUNTIME_TABLES:
-            db.execute('DELETE FROM %s WHERE project_id=?' % table, (pid,))
+    """Diff-apply one project's six CP mirrors as one atomic projection.
+
+    The content hash covers the exact SQLite-bound representation (including
+    JSON strings), while the natural identity stays separate. On a legacy row
+    with a NULL hash we compare projected columns using SQLite's own affinity
+    rules and backfill the hash without rewriting unchanged facts.
+    """
+    identities = {table: ('resource' if table == 'leases' else 'cp_id')
+                  for table in RUNTIME_TABLES}
+    nested = db.in_transaction
+    if nested:
+        db.execute('SAVEPOINT replace_runtime')
+    else:
+        db.execute('BEGIN IMMEDIATE')
+    try:
         for table, columns in RUNTIME_TABLES.items():
-            rows = runtime.get(table) or []
-            if not rows:
-                continue
-            names = [c[0] for c in columns]
-            marks = ','.join('?' * len(names))
-            for row in rows:
-                values = [row.get(src) for _, src in columns]
-                for name, value in zip(names, values):
+            identity = identities[table]
+            numeric_identity = identity != 'resource'
+            names = [name for name, _ in columns]
+            projected = []
+            seen = set()
+            for source in runtime.get(table) or []:
+                values = []
+                for name, source_name in columns:
+                    value = source.get(source_name)
                     if isinstance(value, (dict, list)):
-                        values[names.index(name)] = json.dumps(value, ensure_ascii=False)
-                db.execute('INSERT INTO %s (project_id, %s) VALUES (?,%s)'
-                           % (table, ','.join(names), marks), (pid, *values))
+                        value = json.dumps(value, ensure_ascii=False)
+                    values.append(value)
+                value_by_name = dict(zip(names, values))
+                identity_key = _runtime_identity_key(
+                    value_by_name[identity], numeric=numeric_identity,
+                    require_sqlite_integer=numeric_identity)
+                if identity_key in seen:
+                    raise ValueError('duplicate %s runtime identity %r'
+                                     % (table, value_by_name[identity]))
+                seen.add(identity_key)
+                digest = hashlib.sha256(json.dumps(
+                    values, ensure_ascii=False, separators=(',', ':'),
+                    default=str).encode('utf-8')).hexdigest()
+                projected.append((identity_key, value_by_name[identity],
+                                  values, digest))
+
+            if not projected:
+                present = db.execute('SELECT 1 FROM %s WHERE project_id=? LIMIT 1'
+                                     % table, (pid,)).fetchone()
+                if present is not None:
+                    db.execute('DELETE FROM %s WHERE project_id=?' % table, (pid,))
+                continue
+
+            current_rows = db.execute(
+                'SELECT id, %s, content_hash FROM %s WHERE project_id=? ORDER BY id'
+                % (identity, table), (pid,)).fetchall()
+            by_identity = {}
+            for row in current_rows:
+                key = _runtime_identity_key(row[identity], numeric=numeric_identity)
+                by_identity.setdefault(key, []).append(row)
+
+            names_sql = ','.join(names)
+            marks = ','.join('?' for _ in range(len(names) + 2))
+            update_sql = 'UPDATE %s SET %s WHERE id=?' % (
+                table, ','.join('%s=?' % name for name in names + ['content_hash']))
+            insert_sql = 'INSERT INTO %s (project_id,%s,content_hash) VALUES (%s)' % (
+                table, names_sql, marks)
+            retained = set()
+            removed = set()
+            for key, identity_value, values, digest in projected:
+                matches = by_identity.get(key, [])
+                current = matches[0] if matches else None
+                if current is None:
+                    db.execute(insert_sql, (pid, *values, digest))
+                    continue
+                retained.add(current['id'])
+                if current['content_hash'] == digest:
+                    pass
+                elif current['content_hash'] is None:
+                    unchanged = db.execute(
+                        'SELECT 1 FROM %s WHERE id=? AND project_id=? AND %s'
+                        % (table, ' AND '.join('%s IS ?' % name for name in names)),
+                        (current['id'], pid, *values)).fetchone() is not None
+                    if unchanged:
+                        db.execute('UPDATE %s SET content_hash=? WHERE id=?'
+                                   % table, (digest, current['id']))
+                    else:
+                        db.execute(update_sql, (*values, digest, current['id']))
+                else:
+                    db.execute(update_sql, (*values, digest, current['id']))
+                # Historic wholesale replacement never left duplicate lease
+                # rows, but tolerate them and converge to the source PK.
+                for duplicate in matches[1:]:
+                    db.execute('DELETE FROM %s WHERE id=?' % table,
+                               (duplicate['id'],))
+                    removed.add(duplicate['id'])
+
+            for row in current_rows:
+                if row['id'] not in retained and row['id'] not in removed:
+                    # Rows represented by a source identity were retained
+                    # above; all others disappeared upstream.
+                    db.execute('DELETE FROM %s WHERE id=?' % table, (row['id'],))
+        if nested:
+            db.execute('RELEASE SAVEPOINT replace_runtime')
+        else:
+            db.commit()
+    except BaseException:
+        if nested:
+            db.execute('ROLLBACK TO SAVEPOINT replace_runtime')
+            db.execute('RELEASE SAVEPOINT replace_runtime')
+        else:
+            db.rollback()
+        raise
+
+
+def _runtime_identity_key(value, numeric=True, require_sqlite_integer=False):
+    """Make numeric-affinity identities exact across int/text database reads.
+
+    CP ids are projected into INTEGER-affinity columns. Numeric ids outside
+    SQLite's signed 64-bit integer range, or fractional numeric ids, cannot be
+    represented there without coercion to REAL and possible precision loss.
+    Reject those source values before applying any table changes.
+    """
+    if value is None:
+        return ('null', '')
+    if not numeric:
+        # leases.resource is declared TEXT by the CP store. Leading zeroes,
+        # case and punctuation are part of this natural key.
+        return ('text', str(value))
+    if isinstance(value, bool):
+        value = int(value)
+    if isinstance(value, (int, float, str)):
+        try:
+            number = Decimal(str(value))
+        except (InvalidOperation, ValueError, OverflowError):
+            number = None
+        if number is not None and number.is_finite():
+            sign, digits, exponent = number.as_tuple()
+            digits = list(digits)
+            if require_sqlite_integer:
+                integer = (not any(digits) or exponent >= 0 or (
+                    -exponent <= len(digits)
+                    and all(digit == 0 for digit in digits[exponent:])))
+                if not integer:
+                    raise ValueError('numeric CP id must be an integer: %r' % value)
+                if (number < Decimal('-9223372036854775808')
+                        or number > Decimal('9223372036854775807')):
+                    raise ValueError(
+                        'numeric CP id is outside SQLite INTEGER range: %r' % value)
+            if not any(digits):
+                return ('number', 0, (0,), 0)
+            while len(digits) > 1 and digits[-1] == 0:
+                digits.pop()
+                exponent += 1
+            return ('number', sign, tuple(digits), exponent)
+    return ('text', str(value))
 
 
 def record_user_reply(db, pid, number, body, created_at):

@@ -24,7 +24,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from . import collect, historyapi, notify, store
+from . import collect, historyapi, notify, serving, store
+from .collect_lock import DatabaseRoundLock
 from .runapi import AGENT_RUN_ID_RE, EXEC_ID_RE, run_detail
 from ..cp.commands import validated_spawn_options
 from ..cp.github import GitHub
@@ -68,37 +69,9 @@ STATIC_FILES = {
     '/static/purify.min.js': ('vendor/purify.min.js', 'application/javascript'),
 }
 
-
-def _items(db):
-    issues = [dict(r) for r in db.execute(
-        'SELECT i.*, pr.org_repo FROM issues i JOIN projects pr ON pr.id=i.project_id '
-        'ORDER BY pr.org_repo, i.number')]
-    prs = []
-    rows = [dict(r) for r in db.execute(
-        'SELECT p.*, pr.org_repo FROM prs p JOIN projects pr '
-        'ON pr.id=p.project_id ORDER BY pr.org_repo, p.number')]
-    verdicts = store.verdicts_for(db, rows)  # one scan per project (issue #130)
-    for pr in rows:
-        verdict = store.latest_verdict(db, pr['project_id'], pr['number'],
-                                       cp_verdicts=verdicts[pr['project_id']])
-        pr['verdict'] = verdict[0] if verdict else None
-        pr['verdict_at'] = verdict[1] if verdict else None
-        prs.append(pr)
-    return {'issues': issues, 'prs': prs}
-
-
-def _runtime(db, org_repo):
-    projects = {r['org_repo']: r['id'] for r in db.execute('SELECT id, org_repo FROM projects')}
-    pid = projects.get(org_repo)
-    if pid is None:
-        return None
-    tables = ('work_items', 'executions', 'leases', 'outbox', 'cp_events')
-    data = {}
-    for table in tables:
-        rows = [dict(r) for r in db.execute(
-            'SELECT * FROM %s WHERE project_id=? ORDER BY id DESC LIMIT 200' % table, (pid,))]
-        data[table] = rows
-    return data
+_items = serving.items
+_runtime = serving.runtime
+operator_ledger = serving.operator_ledger
 
 
 def _known_project(db, org_repo):
@@ -201,60 +174,6 @@ def route(db, path, query, config=None, now=None):
     return 'application/json', 404, {'error': 'not found'}
 
 
-def operator_ledger(db, query=None):
-    """The interventions ledger: operator mirror rows joined into per-round
-    rows (signal → runs), newest first. Bounded (review MINOR on unbounded
-    growth): the signals read is capped at `limit` (`?limit=`, default 50,
-    max 500) with the full count reported as `total`; runs are read only for
-    the signals in that page. The operator store stays the source of truth."""
-    import json as _json
-    query = query or {}
-    try:
-        limit = max(1, min(500, int(query.get('limit', 50))))
-    except (TypeError, ValueError):
-        limit = 50
-    total = db.execute('SELECT count(*) FROM operator_signals').fetchone()[0]
-    signals = db.execute('SELECT * FROM operator_signals '
-                         'ORDER BY created_at DESC, id DESC LIMIT ?',
-                         (limit,)).fetchall()
-    runs = {}
-    if signals:
-        ids = [s['id'] for s in signals]
-        marks = ','.join('?' * len(ids))
-        for row in db.execute(
-                'SELECT * FROM operator_runs WHERE signal_id IN (%s) '
-                'ORDER BY started_at' % marks, ids):
-            runs.setdefault(row['signal_id'], []).append(dict(row))
-    rows = []
-    for s in signals:
-        signal = dict(s)
-        payload = _json.loads(signal['payload'])
-        out = {'id': signal['id'],
-               'signal': {'source': signal['source'], 'kind': signal['kind'],
-                          'key': signal['key'], 'org_repo': signal['org_repo'],
-                          'severity': payload.get('severity'),
-                          'message': payload.get('message'),
-                          'note': payload.get('note'),
-                          'received_at': signal['created_at']},
-               'state': signal['state'], 'rounds': runs.get(signal['id'], [])}
-        run = out['rounds'][-1] if out['rounds'] else None
-        if run is not None:
-            result = _json.loads(run['result']) if run['result'] else {}
-            out.update({'agent': run.get('agent'), 'model': run.get('model'),
-                        'started_at': run['started_at'], 'ended_at': run.get('ended_at'),
-                        'run_state': run['state'],
-                        'outcome': result.get('outcome'),
-                        'diagnosis': result.get('diagnosis'),
-                        'actions': result.get('actions', []),
-                        'evidence': result.get('evidence', [])})
-        else:
-            out.update({'agent': None, 'model': None, 'started_at': None,
-                        'ended_at': None, 'run_state': None, 'outcome': None,
-                        'diagnosis': None, 'actions': [], 'evidence': []})
-        rows.append(out)
-    return {'ok': True, 'total': total, 'rows': rows}
-
-
 def create(db, config=None, now=None, on_collect=None, on_reply=None,
            on_review_trigger=None, on_command_status=None, on_preflight=None,
            on_spawn_options=None, on_repair_trigger=None, on_repair_status=None,
@@ -348,10 +267,15 @@ def create(db, config=None, now=None, on_collect=None, on_reply=None,
 
         def run():
             try:
-                on_collect(only)
+                result = on_collect(only)
             except Exception as exc:
                 with collect_lock:
                     collect_state.update(running=False, last_error=str(exc))
+                return
+            if isinstance(result, dict) and isinstance(result.get('collect'), dict) \
+                    and result['collect'].get('skipped'):
+                with collect_lock:
+                    collect_state['running'] = False
                 return
             with cache_lock:
                 generation[0] += 1
@@ -396,7 +320,7 @@ def create(db, config=None, now=None, on_collect=None, on_reply=None,
         def _accepts_gzip(self):
             return 'gzip' in (self.headers.get('Accept-Encoding') or '').lower()
 
-        def _write_body(self, status, content_type, body):
+        def _write_body(self, status, content_type, body, gzip_body=None):
             """Send a response body, gzip-compressed when the client accepts it
             (issue #159, user decision 1A 2A). The dashboard's read endpoints
             ship multi-MB JSON (/api/items 3.1MB, /api/kanban 765KB); gzip
@@ -404,7 +328,7 @@ def create(db, config=None, now=None, on_collect=None, on_reply=None,
             per-response on the already-rendered body — no shared state, safe
             under the threaded server."""
             if self._accepts_gzip() and len(body) >= 512:
-                body = gzip.compress(body)
+                body = gzip_body if gzip_body is not None else gzip.compress(body)
                 encoding = 'gzip'
             else:
                 encoding = None
@@ -567,6 +491,31 @@ def create(db, config=None, now=None, on_collect=None, on_reply=None,
                 return
             query = {k: v[0] for k, v in parse_qs(url.query).items()}
             key = url.path + ('?' + url.query if url.query else '')
+            persistent_key = None
+            if url.path in ('/api/items', '/api/operator', '/api/runtime') \
+                    and query.get('fresh') != '1':
+                persistent = None
+                try:
+                    with database() as source:
+                        persistent_key = serving.key_for_request(
+                            source, url.path, query, url.query)
+                        if persistent_key:
+                            try:
+                                persistent = serving.lookup(source, persistent_key)
+                            except Exception as exc:
+                                # This table is disposable. Keep the canonical
+                                # key marked as such so an older in-memory body
+                                # cannot hide the failure behind a stale hit.
+                                print('dashboard serving cache read failed for %s: %r'
+                                      % (persistent_key, exc), file=sys.stderr)
+                except Exception as exc:
+                    print('dashboard serving cache lookup failed for %s: %r'
+                          % (url.path, exc), file=sys.stderr)
+                if persistent is not None:
+                    body, compressed = persistent
+                    self._write_body(200, 'application/json', body,
+                                     gzip_body=compressed)
+                    return
             # /api/run 绕过快照缓存（Spec Scope）：2.5s 增量轮询要低时延，
             # 且每个 since 分片一个 key，进缓存会周期性挤掉共享的 last-good。
             # fresh=1 是操作者动作（点击触发后的那次重取）的一次性强制刷新：刚写下的
@@ -575,7 +524,7 @@ def create(db, config=None, now=None, on_collect=None, on_reply=None,
             cached = url.path.startswith('/api/') and url.path not in (
                 '/api/run', '/api/history', '/api/review/preflight',
                 '/api/spawn/options') \
-                and query.get('fresh') != '1'
+                and query.get('fresh') != '1' and persistent_key is None
             if cached:
                 with cache_lock:
                     hit = cache.get(key)
@@ -662,21 +611,29 @@ def make_refresh(db_path, root=None, config=None, on_alerts=None):
     """Build a collect+notify closure with its own short-lived connection, so
     it can run on the listener's request thread or a background loop.
     `only` (org__repo from POST /api/collect?project=) scopes to one project.
-No process lock: concurrent collectors are safe on the store itself (see
-    collect.collect). on_alerts (optional) is handed the fresh alert list at
+    A per-database kernel lock coordinates this compatible inline entry with
+    formal CLI rounds. on_alerts (optional) is handed the fresh alert list at
     the evaluation point (operator subscription, same contract as the CLI
     collect path); its failures are recorded by push_new_alerts, never raised."""
     collect_root = root or collect.DEFAULT_ROOT
 
     def refresh_once(only=None):
-        db = store.connect(db_path)
+        lock = DatabaseRoundLock(db_path)
+        if not lock.acquire():
+            return {'collect': {'skipped': 'collect in progress'},
+                    'notify': {'skipped': 'collect in progress'}}
         try:
-            summary = collect.collect(db, root=collect_root,
-                                      only={only} if only else None)
-            note = notify.push_new_alerts(db, config or {}, on_alerts=on_alerts)
-            return {'collect': summary, 'notify': note}
+            db = store.connect(db_path)
+            try:
+                summary = collect.collect(db, root=collect_root,
+                                          only={only} if only else None,
+                                          db_path=db_path)
+                note = notify.push_new_alerts(db, config or {}, on_alerts=on_alerts)
+                return {'collect': summary, 'notify': note}
+            finally:
+                db.close()
         finally:
-            db.close()
+            lock.close()
 
     return refresh_once
 

@@ -12,7 +12,10 @@ background collect loop while serving.
 """
 import argparse
 import json
+import os
 import sys
+import tempfile
+import threading
 from pathlib import Path
 
 SERVICE = Path(__file__).resolve().parents[1]
@@ -20,7 +23,8 @@ if str(SERVICE) not in sys.path:
     sys.path.insert(0, str(SERVICE))
 
 from codeloop import trigger  # noqa: E402  — spawn argv default for register
-from codeloop.dash import collect, notify, serve, store  # noqa: E402
+from codeloop.dash import collect, notify, serve, serving, store  # noqa: E402
+from codeloop.dash.collect_lock import DatabaseRoundLock  # noqa: E402
 from codeloop.operator import config as operator_config  # noqa: E402
 from codeloop.operator import ingest as operator_ingest  # noqa: E402
 from codeloop.operator import store as operator_store  # noqa: E402
@@ -148,6 +152,12 @@ def main(argv=None):
     p_collect.add_argument('--root', default=str(collect.DEFAULT_ROOT))
     p_collect.add_argument('--project', action='append', default=[],
                            help='restrict to org__repo (repeatable)')
+    p_collect.add_argument('--config', default=str(DEFAULT_CONFIG),
+                           help='dashboard config used for alerts and Operator ingest')
+    p_collect.add_argument('--timeout', type=int, default=300,
+                           help='hard child deadline in seconds (default: 300)')
+    p_collect.add_argument('--result-file',
+                           help='atomically write a bounded machine-readable result')
 
     p_serve = sub.add_parser('serve', help='serve the read-only dashboard')
     p_serve.add_argument('--db', default=str(collect.DEFAULT_DB))
@@ -177,33 +187,78 @@ def main(argv=None):
     args = parser.parse_args(argv)
 
     if args.command == 'collect':
-        config = load_config(DEFAULT_CONFIG)
-        db = store.connect(args.db)
-        # Operator subscription (2026-09-30): consume fresh alerts at this
-        # evaluation point and ingest watchdog revivals. Disabled (default,
-        # no config section) keeps the collect path byte-identical.
-        op_cfg = operator_config.load_operator_config(config) \
-            if config else None
-        op_store = _open_operator_store(op_cfg)
+        if not 1 <= args.timeout <= 3600:
+            parser.error('--timeout must be between 1 and 3600 seconds')
+        timer = threading.Timer(args.timeout, lambda: os._exit(124))
+        timer.daemon = True
+        timer.start()
         try:
-            summary = collect.collect(db, root=args.root,
-                                      only=args.project or None)
-            on_alerts = (lambda fresh: operator_ingest.ingest_alerts(
-                op_store, op_cfg, fresh)) if op_store is not None else None
-            note = notify.push_new_alerts(db, config, on_alerts=on_alerts)
-            # issue #302 defect 2: notify only from the collect CLI. Watchdog
-            # revivals are consumed by the serve consumer's single-writer
-            # cursor — a second process ingesting the same dashboard meta
-            # cursor `operator_watchdog_line` raced it (lost-update) and
-            # replayed the same line up to 45×. The CLI stays the alert
-            # evaluator; the serve loop owns the watchdog cursor.
+            lock = DatabaseRoundLock(args.db)
+            if not lock.acquire():
+                result = {'collect': {'skipped': 'collect in progress'},
+                          'notify': {'skipped': 'collect in progress'}}
+                code = 0
+            else:
+                try:
+                    config = load_config(args.config)
+                    db = store.connect(args.db)
+                    # Operator subscription (2026-09-30): consume fresh alerts
+                    # at this evaluation point. The serve process alone owns
+                    # the watchdog cursor.
+                    op_cfg = operator_config.load_operator_config(config) \
+                        if config else None
+                    op_store = _open_operator_store(op_cfg)
+                    try:
+                        summary = collect.collect(db, root=args.root,
+                                                  only=args.project or None,
+                                                  db_path=args.db)
+                        on_alerts = (lambda fresh: operator_ingest.ingest_alerts(
+                            op_store, op_cfg, fresh)) if op_store is not None else None
+                        note = notify.push_new_alerts(db, config, on_alerts=on_alerts)
+                        result = {'collect': summary, 'notify': note}
+                    finally:
+                        if op_store is not None:
+                            op_store.db.close()
+                        db.close()
+                    if args.db == ':memory:':
+                        result['precompute'] = {'skipped': 'in-memory database'}
+                    else:
+                        try:
+                            result['precompute'] = serving.precompute(args.db)
+                        except Exception as exc:
+                            # The read model is disposable. Collection/notification
+                            # remain successful and HTTP falls back to live reads.
+                            result['precompute'] = {'error': str(exc)}
+                    code = 1 if summary['failed'] else 0
+                finally:
+                    lock.close()
         finally:
-            if op_store is not None:
-                op_store.db.close()
-            db.close()
-        print(json.dumps({'collect': summary, 'notify': note},
-                         ensure_ascii=False, indent=2))
-        return 1 if summary['failed'] else 0
+            timer.cancel()
+        if args.result_file:
+            encoded = json.dumps(result, ensure_ascii=False,
+                                 separators=(',', ':')).encode('utf-8')
+            if len(encoded) > 1024 * 1024:
+                print('collect result exceeds 1 MiB', file=sys.stderr)
+                return 2
+            result_path = Path(args.result_file)
+            result_path.parent.mkdir(parents=True, exist_ok=True)
+            fd, temporary = tempfile.mkstemp(prefix='.dashboard-result-',
+                                             dir=str(result_path.parent))
+            try:
+                with os.fdopen(fd, 'wb') as stream:
+                    stream.write(encoded)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                os.replace(temporary, result_path)
+            finally:
+                try:
+                    os.unlink(temporary)
+                except FileNotFoundError:
+                    pass
+            print(json.dumps({'result_file_written': True, 'exit_code': code}))
+        else:
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+        return code
 
     if args.command == 'register':
         if not args.list and not args.project:

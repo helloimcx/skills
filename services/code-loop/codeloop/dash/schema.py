@@ -48,6 +48,13 @@ ALERT_DEFAULTS = {
     'worker_stall_seconds': {'discover': 64800, 'handler': 27000, 'reviewer': 27000},
 }
 
+# The finite persistent serving domain is declared with the schema so every
+# SQLite writer, including mixed-version writers, invalidates it by trigger.
+SERVING_SOURCE_TABLES = (
+    'projects', 'issues', 'prs', 'comments', 'work_items', 'executions',
+    'leases', 'outbox', 'cp_events', 'operator_signals', 'operator_runs',
+)
+
 # agent_runs retention: finished subagent archives older than this are swept
 # (agentruns.sweep); live rows are never aged out (agentruns re-checks them).
 AGENT_RUNS_RETENTION_DAYS = 90
@@ -146,6 +153,7 @@ CREATE TABLE IF NOT EXISTS work_items (
   payload TEXT,
   resources TEXT,
   created_at TEXT,
+  content_hash TEXT,
   UNIQUE(project_id, cp_id));
 CREATE TABLE IF NOT EXISTS executions (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -160,6 +168,7 @@ CREATE TABLE IF NOT EXISTS executions (
   head TEXT,
   expires_at TEXT,
   created_at TEXT,
+  content_hash TEXT,
   UNIQUE(project_id, cp_id));
 CREATE TABLE IF NOT EXISTS leases (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -167,7 +176,8 @@ CREATE TABLE IF NOT EXISTS leases (
   resource TEXT,
   execution_cp_id INTEGER,
   token TEXT,
-  expires_at TEXT);
+  expires_at TEXT,
+  content_hash TEXT);
 CREATE TABLE IF NOT EXISTS outbox (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   project_id INTEGER NOT NULL,
@@ -177,6 +187,7 @@ CREATE TABLE IF NOT EXISTS outbox (
   state TEXT,
   receipt TEXT,
   created_at TEXT,
+  content_hash TEXT,
   UNIQUE(project_id, cp_id));
 CREATE TABLE IF NOT EXISTS cp_events (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -185,6 +196,7 @@ CREATE TABLE IF NOT EXISTS cp_events (
   kind TEXT,
   payload TEXT,
   created_at TEXT,
+  content_hash TEXT,
   UNIQUE(project_id, cp_id));
 -- Mirror of the CP command ledger: the executing agent of a loop execution is
 -- a ledger fact (the operator click names it), and the execution-history list
@@ -195,6 +207,7 @@ CREATE TABLE IF NOT EXISTS commands (
   cp_id INTEGER NOT NULL,
   action TEXT, number INTEGER, state TEXT,
   execution TEXT, agent TEXT, model TEXT, created_at REAL,
+  content_hash TEXT,
   UNIQUE(project_id, cp_id));
 -- Archive of proactively-spawned subagent executions derived deterministically
 -- from the local CLI session stores (agentruns.py; spec
@@ -271,6 +284,17 @@ CREATE TABLE IF NOT EXISTS operator_runs (
     started_at REAL NOT NULL,
     ended_at REAL
 );
+CREATE TABLE IF NOT EXISTS serving_meta (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS serving_cache (
+  key TEXT PRIMARY KEY,
+  body BLOB NOT NULL,
+  gzip_body BLOB NOT NULL,
+  source_revision INTEGER NOT NULL,
+  format_version INTEGER NOT NULL
+);
 """
 
 
@@ -301,6 +325,33 @@ def connect(path):
     except sqlite3.OperationalError:
         pass  # a concurrent writer holds the switch; retry on next connect
     db.executescript(SCHEMA)
+    db.execute("INSERT OR IGNORE INTO serving_meta(key,value) "
+               "VALUES ('source_revision','0')")
+    # Project collection timestamps/config updates do not affect any fixed
+    # builder; only project identity or removal changes their response shape.
+    db.execute('DROP TRIGGER IF EXISTS serving_revision_projects_update')
+    for table in SERVING_SOURCE_TABLES:
+        operations = (('INSERT', 'insert'), ('DELETE', 'delete'))
+        if table == 'projects':
+            operations += (('UPDATE OF id,org_repo', 'update_identity'),)
+        else:
+            operations += (('UPDATE', 'update'),)
+        for operation, suffix in operations:
+            trigger = 'serving_revision_%s_%s' % (table, suffix)
+            db.execute('''CREATE TRIGGER IF NOT EXISTS "%s" AFTER %s ON "%s"
+                BEGIN UPDATE serving_meta SET value=CAST(value AS INTEGER)+1
+                WHERE key='source_revision'; END''' % (trigger, operation, table))
+    # Runtime mirrors were historically replaced wholesale. Add the per-row
+    # projection fingerprint in place so old stores can switch to idempotent
+    # synchronization without rebuilding tables or changing their row ids.
+    for table in ('work_items', 'executions', 'leases', 'outbox', 'cp_events',
+                  'commands'):
+        columns = {row[1] for row in db.execute('PRAGMA table_info(%s)' % table)}
+        if 'content_hash' not in columns:
+            try:
+                db.execute('ALTER TABLE %s ADD COLUMN content_hash TEXT' % table)
+            except sqlite3.OperationalError:
+                pass  # a concurrent connect() added it first
     # Lightweight migration for stores created before the mergeable column.
     columns = {row[1] for row in db.execute('PRAGMA table_info(prs)')}
     if 'mergeable' not in columns:
