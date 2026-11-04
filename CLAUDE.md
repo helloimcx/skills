@@ -32,7 +32,7 @@ Skills are installed by copying folders directly to `~/.claude/skills/`.
 
 ### prototype-first
 - **目录**: `prototype-first/`
-- **功能**: 原型先行 UI 开发流程（在项目 design/ 产出高保真可点击原型，经确认后才允许动实现代码）
+- **功能**: 原型先行 UI 开发流程（Apple HIG 品质、Don't Make Me Think 直观交互、真实截图自问自审，经确认后才动实现代码）
 - **文件**: `prototype-first/SKILL.md`
 
 ### code-duplication-scanner

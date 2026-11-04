@@ -232,10 +232,17 @@ class Service(CommandLedgerMixin):
                 add('close:%s' % number, 'handler', {'task': 'POST_MERGE_VERIFY', 'issue': issue,
                     'prs': merged, 'base_sha': snapshot['base_sha']}, ['issue-%s' % number], 5)
                 continue
-            scopes = self.cfg.get('issue_scopes', {}).get(str(number), ['*'])
+            scopes = self.cfg.get('issue_scopes', {}).get(str(number), [])
             add('issue:%s' % number, 'handler', {'task': 'ISSUE_IMPLEMENTATION',
                 'issue': issue, 'base_sha': snapshot['base_sha']},
                 ['issue-%s' % number] + ['path:' + s for s in scopes], 10)
+
+    def _issue_path_resources(self, issue_numbers):
+        """Return configured path locks without inventing a whole-repo lock."""
+        configured = self.cfg.get('issue_scopes', {})
+        scopes = {scope for number in issue_numbers
+                  for scope in configured.get(str(number), [])}
+        return ['path:' + scope for scope in sorted(scopes)]
 
     def _derive_prs(self, add, prs, issues, snapshot, gates):
         linked = linked_issues(prs)
@@ -246,25 +253,50 @@ class Service(CommandLedgerMixin):
                 continue
             related = [issues[n] for n in linked[pr['number']] if n in issues]
             payload = {'pr': pr, 'issues': related, 'base_sha': snapshot['base_sha']}
-            changes, approved_here = gate_mod.terminal_verdicts(
+            changes, validation_failed, approved_here = gate_mod.terminal_verdicts(
                 self.store, pr, gate_mod.changes_requested(pr))
             resources = ['pr-%s' % pr['number'], 'branch-' + pr['head']['ref']]
             resources += ['issue-%s' % n for n in linked[pr['number']]]
             signal = signals.get('review:%s' % pr['number'])
-            if changes or pr.get('mergeable') is False:
-                repair_reasons = []
-                if changes:
-                    repair_reasons.append('changes_requested')
-                if pr.get('mergeable') is False:
-                    repair_reasons.append('merge_conflict')
-                payload['task'] = 'PR_REVIEW_FIX' if changes else 'PR_CONFLICT_RESOLUTION'
+            validation_base_stale = (validation_failed
+                                     and gate_mod.attributed_stale(signal, pr))
+            validation_frozen = (validation_failed
+                                 and gate_mod.is_frozen(signal, pr, open_gates,
+                                                        snapshot['base_sha']))
+            repair_reasons = []
+            if changes:
+                repair_reasons.append('changes_requested')
+            if validation_failed and not validation_frozen:
+                repair_reasons.append('validation_failed')
+            if pr.get('mergeable') is False:
+                repair_reasons.append('merge_conflict')
+            if validation_base_stale:
+                payload['task'] = 'PR_SYNC_BASE'
                 payload['repair_reasons'] = repair_reasons
-                add('repair:%s' % pr['number'], 'handler', payload, resources + ['path:*'], 20)
+                add('repair:%s' % pr['number'], 'handler', payload,
+                    resources + self._issue_path_resources(linked[pr['number']]), 20)
+            elif validation_frozen:
+                # Suppress only the validation-derived repair. Independent
+                # review and merge-conflict work remains actionable.
+                if not (changes or pr.get('mergeable') is False):
+                    continue
+                payload['repair_reasons'] = repair_reasons
+                payload['task'] = ('PR_REVIEW_FIX' if changes
+                                   else 'PR_CONFLICT_RESOLUTION')
+                add('repair:%s' % pr['number'], 'handler', payload,
+                    resources + self._issue_path_resources(linked[pr['number']]), 20)
+            elif repair_reasons:
+                payload['task'] = ('PR_REVIEW_FIX' if changes or validation_failed
+                                   else 'PR_CONFLICT_RESOLUTION')
+                payload['repair_reasons'] = repair_reasons
+                add('repair:%s' % pr['number'], 'handler', payload,
+                    resources + self._issue_path_resources(linked[pr['number']]), 20)
             elif gate_mod.attributed_stale(signal, pr):
                 # The red survived the rerun and pre-exists at the fork point
                 # while the base tip is green: merging origin/base cures it.
                 payload['task'] = 'PR_SYNC_BASE'
-                add('repair:%s' % pr['number'], 'handler', payload, resources + ['path:*'], 20)
+                add('repair:%s' % pr['number'], 'handler', payload,
+                    resources + self._issue_path_resources(linked[pr['number']]), 20)
             elif approved_here:
                 continue
             elif gate_mod.is_frozen(signal, pr, open_gates, snapshot['base_sha']):
@@ -875,7 +907,7 @@ class Service(CommandLedgerMixin):
     def _publish_actions(self, eid, token, result):
         """Local carrier for a batch; remote workers use begin/commit per item."""
         actions = result['actions']
-        if not isinstance(actions, list) or not 2 <= len(actions) <= 10:
+        if not isinstance(actions, list) or not actions:
             raise ValueError('INVALID_ACTIONS')
         receipts = []
         for index in range(len(actions)):
@@ -985,7 +1017,7 @@ class Service(CommandLedgerMixin):
                               action_index, context=None):
         """Persist or reconcile one child Issue operation for publish/begin."""
         actions = result['actions']
-        if item['kind'] != 'discover' or not isinstance(actions, list) or not 2 <= len(actions) <= 10:
+        if item['kind'] != 'discover' or not isinstance(actions, list) or not actions:
             raise ValueError('INVALID_ACTIONS')
         if action_index is None:
             action_index = 0

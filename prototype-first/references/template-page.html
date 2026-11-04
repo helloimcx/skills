@@ -4,35 +4,180 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>__页面名__ · __项目名__</title>
-<!-- 共享样式：与实现主题视觉一致；引用带 ?v= 防缓存
-<link rel="stylesheet" href="assets/app.css?v=__YYYYMMDD__">
+<!-- proto:
+需求: __对应 issue/spec 或一句话需求__
+入口路径: __实现的路由/入口，如 /projects__
+数据契约: __新增后端接口在此定义；纯本地演示写 无__
 -->
+<!-- 这是可交互起点，不是所有产品的固定布局。替换示例领域、文案、状态与设计 tokens。
+     假数据只在本地内存中变化，不发真实请求。按 design-quality.md 截图、看图、走查。
+     跨页复用样式移到 assets/，引用带 ?v=版本。 -->
 <style>
-  /* 页面私有样式；跨页复用的进 assets/ */
-  body { font-family: system-ui, sans-serif; margin: 24px; color: #16232e; }
-  h1 { font-size: 20px; }
+  :root {
+    color-scheme: light;
+    --canvas: #f5f5f7;
+    --surface: #fff;
+    --text: #1d1d1f;
+    --secondary: #626267;
+    --line: #dedee3;
+    --accent: #0066cc;
+    --accent-hover: #0055ad;
+    --danger: #b42318;
+    --radius: 18px;
+    --space: 8px;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-size: 16px;
+    line-height: 1.5;
+    color: var(--text);
+    background: var(--canvas);
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; }
+  button, input { font: inherit; }
+  button, summary { cursor: pointer; touch-action: manipulation; }
+  button {
+    min-height: 44px;
+    padding: var(--space) calc(2 * var(--space));
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    color: var(--text);
+    background: var(--surface);
+  }
+  button:hover { background: var(--canvas); }
+  .primary { background: var(--accent); color: #fff; border-color: transparent; }
+  .primary:hover { background: var(--accent-hover); }
+  :focus-visible { outline: 3px solid var(--accent); outline-offset: 4px; }
+  .shell { max-width: 1040px; margin-inline: auto; padding-inline: calc(4 * var(--space)); }
+  .topbar { border-bottom: 1px solid var(--line); background: var(--surface); }
+  .topbar .shell { min-height: 68px; display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+  .brand { font-weight: 600; overflow-wrap: anywhere; }
+  .preview { color: var(--secondary); font-size: .8125rem; flex-shrink: 0; }
+  main { padding-block: calc(7 * var(--space)); }
+  .heading { display: flex; align-items: center; justify-content: space-between; gap: 24px; margin-bottom: 32px; }
+  h1 { font-size: 2rem; letter-spacing: -.025em; line-height: 1.2; margin: 0 0 12px; overflow-wrap: anywhere; }
+  p { margin: 0; }
+  .subtle { color: var(--secondary); }
+  .heading button { flex-shrink: 0; }
+  .collection { border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
+  .collection-head { padding: 20px 24px; border-bottom: 1px solid var(--line); }
+  h2 { font-size: 1rem; font-weight: 600; margin: 0; }
+  ul { list-style: none; padding: 0; margin: 0; }
+  li + li { border-top: 1px solid var(--line); }
+  summary { padding: 24px; border-radius: 8px; overflow-wrap: anywhere; }
+  summary:hover { background: var(--canvas); }
+  li:last-child details:not([open]) > summary { border-radius: 0 0 calc(var(--radius) - 1px) calc(var(--radius) - 1px); }
+  .item-name { font-weight: 600; margin-left: 4px; }
+  .item-meta { display: block; margin: 8px 0 0 20px; color: var(--secondary); font-size: .875rem; }
+  .item-description { padding: 0 24px 24px 44px; color: var(--secondary); overflow-wrap: anywhere; }
+  .feedback { min-height: 24px; margin-top: 16px; color: var(--secondary); }
+  dialog { width: min(460px, calc(100% - 32px)); max-height: calc(100dvh - 32px); overflow: auto; padding: 32px; border: 1px solid var(--line); border-radius: var(--radius); color: var(--text); background: var(--surface); }
+  dialog::backdrop { background: rgb(0 0 0 / .28); }
+  dialog h2 { font-size: 1.5rem; margin-bottom: 24px; }
+  label { display: block; font-weight: 600; margin-bottom: 8px; }
+  input { display: block; width: 100%; min-height: 44px; padding: 10px 12px; border: 1px solid #85858b; border-radius: 8px; color: var(--text); background: var(--surface); }
+  input[aria-invalid="true"] { border-color: var(--danger); }
+  .error { color: var(--danger); min-height: 24px; font-size: .875rem; margin-top: 8px; }
+  .actions { display: flex; justify-content: flex-end; gap: 12px; margin-top: 24px; flex-wrap: wrap; }
+  @media (max-width: 600px) {
+    .shell { padding-inline: 20px; }
+    main { padding-block: 32px; }
+    .heading { flex-direction: column; align-items: stretch; gap: 24px; }
+    h1 { font-size: 1.75rem; }
+    .collection-head, summary { padding: 20px; }
+    .item-description { padding-inline: 40px 20px; }
+    dialog { padding: 24px; }
+  }
 </style>
 </head>
 <body>
-<!-- proto:
-需求: __对应 issue/spec 或一句话需求__
-入口路径: __实现的路由/入口，如 /report 或 view=run__
-数据契约: __新增后端接口在此定义；纯展示写 无__
--->
-
-<h1>__页面名__（原型 · 假数据）</h1>
-
-<!-- 布局区块：按页面结构拆 section，每个可交互元素都要真的可点 -->
-
+<header class="topbar">
+  <div class="shell"><span class="brand">__项目名__</span><span class="preview">原型预览</span></div>
+</header>
+<main class="shell">
+  <div class="heading">
+    <div><h1>__页面名__</h1><p class="subtle">集中管理项目，查看最新进展。</p></div>
+    <button class="primary" id="create" type="button">创建项目</button>
+  </div>
+  <section class="collection" aria-labelledby="list-title">
+    <div class="collection-head"><h2 id="list-title">全部项目</h2></div>
+    <ul id="projects"></ul>
+  </section>
+  <p class="feedback" id="feedback" role="status" aria-live="polite"></p>
+</main>
+<dialog id="create-dialog" aria-labelledby="dialog-title">
+  <form id="create-form" novalidate>
+    <h2 id="dialog-title">创建项目</h2>
+    <label for="project-name">项目名称</label>
+    <input id="project-name" name="name" required maxlength="60" autocomplete="off" aria-describedby="name-error" autofocus>
+    <p id="name-error" class="error" aria-live="polite"></p>
+    <div class="actions">
+      <button id="cancel" type="button">取消</button>
+      <button class="primary" type="submit">创建项目</button>
+    </div>
+  </form>
+</dialog>
 <script>
-  // 假数据内联：不引外部数据源、不发真实请求
-  var FAKE = [
-    { "name": "示例条目 A", "value": 42 },
-    { "name": "示例条目 B", "value": 7 }
+  // 示例主路径：创建 → 名称校验 → 列表更新 + 成功反馈；详情用原生 disclosure 展开。
+  // 按真实需求补充适用的空、加载、错误等状态，不把这些示例当作完整产品。
+  const FAKE = [
+    { name: "品牌网站改版", meta: "进行中 · 今天更新", description: "梳理核心内容与浏览路径，让访客更容易找到所需信息。" },
+    { name: "秋季新品发布与线下体验活动筹备", meta: "计划中 · 昨天更新", description: "确认发布节奏、活动安排与相关协作事项。" }
   ];
-  // 交互演示：状态切换 / 弹窗 / 下钻等，用原生 JS 实现到可点击
-  document.body.insertAdjacentHTML("beforeend",
-    "<ul>" + FAKE.map(function (it) { return "<li>" + it.name + "：" + it.value + "</li>"; }).join("") + "</ul>");
+  const list = document.querySelector("#projects");
+  const dialog = document.querySelector("#create-dialog");
+  const form = document.querySelector("#create-form");
+  const input = document.querySelector("#project-name");
+  const error = document.querySelector("#name-error");
+  const create = document.querySelector("#create");
+  function render() {
+    list.replaceChildren();
+    FAKE.forEach(item => {
+      const li = document.createElement("li");
+      const details = document.createElement("details");
+      const summary = document.createElement("summary");
+      const name = document.createElement("span");
+      name.className = "item-name";
+      name.textContent = item.name;
+      const meta = document.createElement("span");
+      meta.className = "item-meta";
+      meta.textContent = item.meta;
+      const description = document.createElement("p");
+      description.className = "item-description";
+      description.textContent = item.description;
+      summary.append(name, meta);
+      details.append(summary, description);
+      li.append(details);
+      list.append(li);
+    });
+  }
+  function clearError() {
+    error.textContent = "";
+    input.removeAttribute("aria-invalid");
+  }
+  create.addEventListener("click", () => {
+    form.reset();
+    clearError();
+    document.querySelector("#feedback").textContent = "";
+    dialog.showModal();
+  });
+  document.querySelector("#cancel").addEventListener("click", () => dialog.close());
+  dialog.addEventListener("close", () => create.focus());
+  input.addEventListener("input", clearError);
+  form.addEventListener("submit", event => {
+    event.preventDefault();
+    const name = input.value.trim();
+    if (!name) {
+      error.textContent = "请输入项目名称。";
+      input.setAttribute("aria-invalid", "true");
+      input.focus();
+      return;
+    }
+    FAKE.unshift({ name, meta: "计划中 · 刚刚创建", description: "尚未添加项目说明。" });
+    render();
+    dialog.close();
+    document.querySelector("#feedback").textContent = `已创建“${name}”。`;
+  });
+  render();
 </script>
 </body>
 </html>
