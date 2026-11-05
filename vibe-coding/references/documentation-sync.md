@@ -27,15 +27,13 @@
 
 ## 2. 文档更新映射
 
-只更新实际受影响的文档：
+先检查目标仓库实际存在的架构资产、维护规则、schema 和检查命令，再只更新实际受影响且由项目契约要求的文档：
 
-- 系统整体架构与分层矩阵 → `docs/architecture/`（更新对应的 L1 `system-architecture.json`、L2 `*.workflow.json` / `*.sequence.json`、L3 `*.lifecycle.json` 规范）
-- 语义架构变更记录与对比图 → `docs/architecture/changes/YYYY-MM-DD-<task-slug>.md`，引用 Plan 中的 Mermaid/ASCII
-- 全景矩阵大盘与 README → `docs/architecture/overview.md` 与根目录 README 中的 `<picture>` managed block
-- 模块职责与边界 → `docs/architecture/modules.md`
-- 新增职责与边界清晰的较大独立模块 → `docs/architecture/modules/<module-name>.md`，并在 `docs/architecture/modules.md` 增加入口
-- 模块依赖关系 → `docs/architecture/dependencies.md`
-- 重要架构决策及原因 → `docs/architecture/decisions/` 中的 ADR
+- 系统整体架构、分层和流程 → 项目实际的权威架构文档；若项目契约采用 JSON L1-L3，则按其 schema 更新 `system-architecture.json`、`*.workflow.json`、`*.sequence.json`、`*.lifecycle.json` 等相应规范
+- 语义架构变更记录与对比图 → 项目已有的变更记录位置与格式，引用 Plan 中的 Mermaid/ASCII
+- 全景矩阵、模块职责、依赖和索引 → 项目已有的 overview（如 `overview.md`）、模块、依赖文档及 README 入口
+- 新增职责与边界清晰的较大独立模块 → 项目约定的模块文档位置，并在其索引中增加入口
+- 重要架构决策及原因 → 项目已有的 ADR 位置和格式
 - 功能规格变化 → 对应 Spec
 - 开发计划变化 → 对应 Plan
 - Agent 工作规则、开发命令或仓库级约束变化 → `CLAUDE.md` / `AGENTS.md`
@@ -46,8 +44,12 @@
 
 ## 3. 一致性原则
 
-- `docs/architecture/` 描述当前实现的真实架构，提交完成后必须与当前 HEAD 一致，不保留未标记的失效描述；
-- 架构变更时执行项目已有且适用的架构门禁（如 `lint:arch`），遵循项目的 Schema 与质量契约；
+- 先确认目标仓库实际存在的权威文档、维护规则、schema 和可用检查；架构同步遵循项目已有契约，不以本 Skill 预设某一种文件格式；
+- Markdown-only 项目更新其现有权威 Markdown 文档，不创建项目没有的 JSON schema、`lint:arch` 命令或新项目脚手架；
+- 只有项目契约确实要求 JSON L1-L3 时才按对应 schema 更新；只有 `lint:arch` 实际可用且适用时才运行；
+- 对项目契约没有要求的资产或检查，记录 `[N/A]` 和理由；契约要求执行但当前环境不可运行时记录 `[BLOCKED]` 和原因，不得标成 `[PASS]`；
+- 项目的权威架构文档描述当前实现，提交完成后必须与当前 HEAD 一致，不保留未标记的失效描述；
+- `project-setup` 的严格架构资产要求面向新项目初始化，不强制施加于存量项目；存量项目继续遵循自身架构契约；
 - 历史架构决策及原因通过 ADR 保存；
 - 语义变更历史与对比产物由 `docs/architecture/changes/` 保存，代码变更历史由 Git 保存；
 - 文档名称、路径和术语与代码中的模块、接口和数据结构保持一致；
