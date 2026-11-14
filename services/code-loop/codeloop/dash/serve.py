@@ -334,6 +334,9 @@ def create(db, config=None, now=None, on_collect=None, on_reply=None,
     # whole-page freeze and silently dropped clicks.
     collect_state = {'running': False, 'since': None, 'last_error': None}
     collect_lock = threading.Lock()
+    collect_done = threading.Event()
+    collect_done.set()
+    collect_closing = [False]
 
     def start_collect(only):
         """Submit the collection and answer at once: ``started`` (runner
@@ -342,9 +345,12 @@ def create(db, config=None, now=None, on_collect=None, on_reply=None,
         on the next fetch; a failure keeps the last-good snapshot untouched
         and lands the reason in collect_state.last_error."""
         with collect_lock:
+            if collect_closing[0]:
+                return {'collect': {'skipped': 'server shutting down'}}
             if collect_state['running']:
                 return {'collect': {'skipped': 'collect in progress'}}
             collect_state.update(running=True, since=moment(), last_error=None)
+            collect_done.clear()
 
         def run():
             try:
@@ -352,6 +358,8 @@ def create(db, config=None, now=None, on_collect=None, on_reply=None,
             except Exception as exc:
                 with collect_lock:
                     collect_state.update(running=False, last_error=str(exc))
+                    collect_done.set()
+                print('dashboard collection failed: %s' % exc, file=sys.stderr, flush=True)
                 return
             with cache_lock:
                 generation[0] += 1
@@ -360,11 +368,13 @@ def create(db, config=None, now=None, on_collect=None, on_reply=None,
             # 提交方随后一次 refresh 必然拿到采集后的新数据。
             with collect_lock:
                 collect_state['running'] = False
+                collect_done.set()
         try:
             threading.Thread(target=run, daemon=True).start()
         except Exception as exc:   # 线程资源耗尽等：复位单飞，别永久卡 skipped
             with collect_lock:
                 collect_state.update(running=False, last_error=str(exc))
+                collect_done.set()
             return {'collect': {'skipped': 'spawn failed'}}
         return {'collect': {'started': True, 'project': only}}
 
@@ -655,6 +665,12 @@ def create(db, config=None, now=None, on_collect=None, on_reply=None,
             self._write_body(status, content_type, body)
 
     Handler.snapshot_cache = cache   # test/introspection surface
+    Handler.submit_collection = staticmethod(start_collect)
+    Handler.wait_for_collection = staticmethod(collect_done.wait)
+    def close_collection():
+        with collect_lock:
+            collect_closing[0] = True
+    Handler.close_collection = staticmethod(close_collection)
     return Handler
 
 
@@ -666,14 +682,18 @@ No process lock: concurrent collectors are safe on the store itself (see
     collect.collect). on_alerts (optional) is handed the fresh alert list at
     the evaluation point (operator subscription, same contract as the CLI
     collect path); its failures are recorded by push_new_alerts, never raised."""
-    collect_root = root or collect.DEFAULT_ROOT
+    collect_root = root or collect.data_home() / 'projects'
 
     def refresh_once(only=None):
         db = store.connect(db_path)
         try:
-            summary = collect.collect(db, root=collect_root,
-                                      only={only} if only else None)
-            note = notify.push_new_alerts(db, config or {}, on_alerts=on_alerts)
+            with collect.collection_lock(db_path):
+                summary = collect.collect(db, root=collect_root,
+                                          only={only} if only else None, lock_held=True)
+                note = notify.push_new_alerts(db, config or {}, on_alerts=on_alerts)
+            if summary.get('failed') or note.get('error'):
+                print('dashboard collection incomplete: %s; notification: %s' %
+                      (summary.get('failed'), note.get('error')), file=sys.stderr, flush=True)
             return {'collect': summary, 'notify': note}
         finally:
             db.close()
@@ -686,7 +706,7 @@ def make_replier(db_path, root=None):
     decision comment to Gitea (comment_issue only) and records it in
     user_replies so the decision leaves the queue immediately. Returns the
     platform receipt; raises on write failure."""
-    collect_root = root or collect.DEFAULT_ROOT
+    collect_root = root or collect.data_home() / 'projects'
 
     def replier(org_repo, number, body):
         db = store.connect(db_path)
@@ -721,7 +741,7 @@ def _project_service(db_path, root, coordinator, org_repo):
             if exc.code != 'PROJECT_NOT_REMOTE':
                 raise ActionError(404 if exc.code == 'PROJECT_NOT_FOUND'
                                   else 502, exc.message or exc.code) from None
-    collect_root = root or collect.DEFAULT_ROOT
+    collect_root = root or collect.data_home() / 'projects'
     from ..cp.runtime import load_server_config
     path = Path(collect_root) / org_repo / 'control-plane.json'
     if not path.is_file():

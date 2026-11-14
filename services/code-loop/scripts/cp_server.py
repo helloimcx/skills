@@ -22,6 +22,7 @@ if str(SERVICE) not in sys.path:
     sys.path.insert(0, str(SERVICE))
 
 from codeloop.cp.protocol import PROTOCOL_VERSION
+from codeloop.cp.runtime import data_home
 from codeloop.cp.server import spawn_options
 from codeloop.operator import config as operator_config
 from codeloop.operator import ingest as operator_ingest
@@ -30,17 +31,18 @@ from codeloop.operator import wiring as operator_wiring
 from codeloop.operator import face
 from codeloop.cp.registry import Registry, RegistryError
 
-DEFAULT_HOME = Path.home() / '.code-loop' / 'server'
+DEFAULT_HOME = data_home() / 'server'
 DEFAULT_PORT = 8722
 DEFAULT_UI_HOST = '127.0.0.1'
 DEFAULT_UI_PORT = 8712
 SERVER_JSON = {
     'host': '127.0.0.1',
     'port': DEFAULT_PORT,
-    'projects_root': str(Path.home() / '.code-loop' / 'projects'),
+    'projects_root': str(data_home() / 'projects'),
     'cert_file': None,
     'key_file': None,
     'observer_period': 120,
+    'collection_period': 1800,
     'ui_host': DEFAULT_UI_HOST,
     'ui_port': DEFAULT_UI_PORT,
     'ws_ping_seconds': 30,
@@ -55,16 +57,20 @@ def load_settings(home):
     settings = json.loads(path.read_text(encoding='utf-8'))
     settings.setdefault('host', SERVER_JSON['host'])
     settings.setdefault('port', SERVER_JSON['port'])
-    settings.setdefault('projects_root', SERVER_JSON['projects_root'])
+    settings.setdefault('projects_root', str(data_home() / 'projects'))
     settings.setdefault('cert_file', None)
     settings.setdefault('key_file', None)
     settings.setdefault('observer_period', DEFAULT_OBSERVER_PERIOD)
+    settings.setdefault('collection_period', SERVER_JSON['collection_period'])
     settings.setdefault('ui_host', SERVER_JSON['ui_host'])
     settings.setdefault('ui_port', SERVER_JSON['ui_port'])
     settings.setdefault('ws_ping_seconds', SERVER_JSON['ws_ping_seconds'])
     period = settings['observer_period']
     if isinstance(period, bool) or not isinstance(period, (int, float)) or period <= 0:
         raise SystemExit('server.json: observer_period must be a positive number of seconds')
+    period = settings['collection_period']
+    if isinstance(period, bool) or not isinstance(period, (int, float)) or not 0 <= period < float('inf'):
+        raise SystemExit('server.json: collection_period must be a non-negative number of seconds')
     ping = settings['ws_ping_seconds']
     if isinstance(ping, bool) or not isinstance(ping, (int, float)) or ping < 5:
         raise SystemExit('server.json: ws_ping_seconds must be a number of seconds >= 5')
@@ -76,7 +82,8 @@ def cmd_init(args):
     home.mkdir(parents=True, exist_ok=True)
     server_json = home / 'server.json'
     if not server_json.is_file():
-        server_json.write_text(json.dumps(SERVER_JSON, ensure_ascii=False, indent=2), encoding='utf-8')
+        defaults = dict(SERVER_JSON, projects_root=str(data_home() / 'projects'))
+        server_json.write_text(json.dumps(defaults, ensure_ascii=False, indent=2), encoding='utf-8')
     Registry(home / 'registry.sqlite').close()
     print(json.dumps({'ok': True, 'result': {
         'home': str(home), 'server_json': str(server_json),
@@ -202,7 +209,7 @@ def _dash_config():
     listener, plus the optional ``operator`` section for the in-process
     subscription). None when absent or unreadable — the UI stays silent on
     alerts and the operator subscription stays disabled."""
-    config_path = Path.home() / '.code-loop' / 'dashboard.json'
+    config_path = data_home() / 'dashboard.json'
     try:
         config = json.loads(config_path.read_text(encoding='utf-8'))
     except (OSError, ValueError):
@@ -251,7 +258,8 @@ def _ui_listener(settings, coordinator):
                                      % (ui_host, ui_port)},
                          ensure_ascii=False, sort_keys=True), flush=True)
         return None, None
-    db_path = str(collect.DEFAULT_DB)
+    db_path = str(data_home() / 'dashboard.sqlite')
+    Path(db_path).parent.mkdir(parents=True, exist_ok=True)
     root = settings['projects_root']
     alerts = _dash_alert_config()
     # Operator subscription (MAJOR-1 / spec PR1 第 2 挂点): the in-process
@@ -291,7 +299,7 @@ def _ui_listener(settings, coordinator):
                       dash_db=db_path))
         coordinator.event_sink, _feed = operator_wiring.start_consumer(
             op_conn, op_cfg, coordinator.dispatcher,
-            Path.home() / '.code-loop' / 'logs' / 'watchdog.jsonl', dash_db=db)
+            data_home() / 'logs' / 'watchdog.jsonl', dash_db=db)
         on_operator_trigger = operator_wiring.make_manual_trigger(
             op_conn, op_cfg, coordinator.dispatcher)
         on_operator_options = operator_wiring.make_options(op_cfg, coordinator.dispatcher)
@@ -345,6 +353,37 @@ def _server_local_service(project_key, settings):
         return Service(cfg, authorization={'host': 'cp-server', 'managed_by': 'registry'})
     except Exception:
         return None
+
+
+def _headless_collection_handler(settings, coordinator):
+    """Keep collection and alert evaluation alive when the UI cannot bind."""
+    from codeloop.dash import collect, serve as dash_serve, store as dash_store
+    db_path = str(data_home() / 'dashboard.sqlite')
+    Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+    db = dash_store.connect(db_path)
+    op_store = None
+    on_alerts = None
+    try:
+        op_cfg = operator_config.load_operator_config(_dash_config())
+        if op_cfg and op_cfg.get('enabled'):
+            op_store = operator_store.open_store()
+            on_alerts = lambda fresh: operator_ingest.ingest_alerts(op_store, op_cfg, fresh)
+            op_conn = operator_store.open_store()
+            face.wire({'collect_refresh', 'command_resend', 'wal_checkpoint',
+                       'github_create_issue', 'github_comment_issue',
+                       'gitea_create_issue', 'gitea_comment_issue', 'escalate_human'},
+                      operator_wiring.make_executor(
+                          settings['projects_root'], coordinator.dispatcher,
+                          dash_serve.make_refresh(db_path, root=settings['projects_root'],
+                                                  config=_dash_alert_config()), dash_db=db_path))
+            coordinator.event_sink, _feed = operator_wiring.start_consumer(
+                op_conn, op_cfg, coordinator.dispatcher,
+                data_home() / 'logs' / 'watchdog.jsonl', dash_db=db)
+    except Exception as exc:
+        print('dashboard operator subscription unavailable: %s' % exc, file=sys.stderr, flush=True)
+    handler = dash_serve.create(db, on_collect=dash_serve.make_refresh(
+        db_path, root=settings['projects_root'], config=_dash_alert_config(), on_alerts=on_alerts))
+    return handler, db, op_store
 
 
 def repair_tick(coordinator, settings):
@@ -424,6 +463,21 @@ def _repair_loop(coordinator, settings, period=60):
             pass   # per-project failures already stay contained
 
 
+def _collection_driver(submit, period, stop):
+    """Submit immediately and then periodically, sharing the UI single-flight gate."""
+    while not stop.is_set():
+        try:
+            result = submit(None)
+            skipped = (result or {}).get('collect', {}).get('skipped')
+            if skipped:
+                print('dashboard periodic collection skipped: %s' % skipped,
+                      file=sys.stderr, flush=True)
+        except Exception as exc:
+            print('dashboard collection submission failed: %s' % exc, file=sys.stderr, flush=True)
+        if stop.wait(period):
+            break
+
+
 def _watch_stdin_eof(httpd):
     """Exit this serve process once stdin reaches EOF — the launcher died.
 
@@ -491,6 +545,11 @@ def cmd_serve(args):
     coordinator = Coordinator(settings['projects_root'], Path(args.home) / 'registry.sqlite')
     lock_fh = _acquire_daemon_lock(args.home, host, port)
     ui = None
+    collection_stop = threading.Event()
+    collection_thread = None
+    collection_handler = None
+    headless_db = headless_operator = None
+    ui_started = False
     try:
         # Only the lock holder refreshes: a second serve process must not put
         # a second crawler on the same store.
@@ -502,6 +561,17 @@ def cmd_serve(args):
         ui, ui_db = _ui_listener(settings, coordinator)
         if ui is not None:
             threading.Thread(target=ui.serve_forever, name='ui', daemon=True).start()
+            ui_started = True
+            collection_handler = ui.RequestHandlerClass
+        elif settings['collection_period']:
+            collection_handler, headless_db, headless_operator = _headless_collection_handler(settings, coordinator)
+        if settings['collection_period']:
+            collection_thread = threading.Thread(
+                target=_collection_driver,
+                args=(collection_handler.submit_collection,
+                      settings['collection_period'], collection_stop),
+                name='dashboard-collection', daemon=True)
+            collection_thread.start()
         httpd = make_server(coordinator, host, port)
         if cert:
             context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
@@ -517,6 +587,22 @@ def cmd_serve(args):
             _watch_stdin_eof(httpd)
         httpd.serve_forever()
     finally:
+        collection_stop.set()
+        if collection_handler is not None:
+            collection_handler.close_collection()
+        if collection_thread is not None:
+            collection_thread.join()
+        if ui_started:
+            ui.shutdown()
+        drained = True
+        if collection_handler is not None:
+            drained = collection_handler.wait_for_collection(5)
+            if not drained:
+                print('dashboard collection still running during shutdown', file=sys.stderr, flush=True)
+        if headless_operator is not None and drained:
+            headless_operator.db.close()
+        if headless_db is not None:
+            headless_db.close()
         if ui is not None:
             ui.server_close()
             ui_db.close()
@@ -667,7 +753,7 @@ def cmd_requests(args):
 
 def parser():
     p = argparse.ArgumentParser(prog='cp_server.py')
-    p.add_argument('--home', default=str(DEFAULT_HOME), help='server home (default ~/.code-loop/server)')
+    p.add_argument('--home', default=str(data_home() / 'server'), help='server home (default ~/.code-loop/server)')
     sub = p.add_subparsers(dest='command', required=True)
     sub.add_parser('init')
     serve = sub.add_parser('serve')

@@ -463,29 +463,26 @@ class CollectTests(unittest.TestCase):
     def test_collect_parallel_collects_all_projects_and_isolates_failures(self):
         """issue #160 回归：项目级并发采集（1A 2B）。
 
-        ① 并发路径存在：collect 必须经 ThreadPoolExecutor 并行提交项目
+        ① 并发路径存在：两个项目必须同时开始采集
         （回退串行循环时本测试变红）；② 多项目全部落库、单个失败隔离——
         与串行语义一致，并发不破坏失败隔离。"""
-        from concurrent.futures import ThreadPoolExecutor
+        import threading
         broken = self.make_project('z__w', enabled=False, cp=False)
         config = json.loads((broken / 'control-plane.json').read_text(encoding='utf-8'))
         config['platform']['url'] = 'http://127.0.0.1:1'
         config['platform']['repo'] = 'z/w'
         (broken / 'control-plane.json').write_text(json.dumps(config), encoding='utf-8')
         db = self.connect()
-        spawned = []
-        original_executor = collect.ThreadPoolExecutor
-
-        def spy_executor(max_workers=None, **kwargs):
-            spawned.append(max_workers)
-            return original_executor(max_workers=max_workers, **kwargs)
-
-        collect.ThreadPoolExecutor = spy_executor
+        barrier = threading.Barrier(2, timeout=5)
+        original = collect.collect_project
+        def concurrent_project(*args, **kwargs):
+            barrier.wait()
+            return original(*args, **kwargs)
+        collect.collect_project = concurrent_project
         try:
             summary = collect.collect(db, root=self.root, max_workers=3)
         finally:
-            collect.ThreadPoolExecutor = original_executor
-        self.assertEqual([3], spawned, 'collect 必须用 ThreadPoolExecutor(max_workers) 并发采集')
+            collect.collect_project = original
         self.assertEqual(2, summary['projects'])
         self.assertEqual(1, len(summary['failed']))
         self.assertIn('z__w', summary['failed'][0])
@@ -599,7 +596,7 @@ class MachineRegistryTests(unittest.TestCase):
                 raise sqlite3.DatabaseError('file is not a database')
 
             import dashboard as dash_cli
-            with mock.patch.object(dash_cli, 'DEFAULT_CONFIG', str(config)), \
+            with mock.patch.object(dash_cli, 'data_home', return_value=home), \
                     mock.patch.object(dash_cli.operator_store, 'open_store',
                                       side_effect=broken_open), \
                     mock.patch.object(dash_cli.collect, 'collect',
