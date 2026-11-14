@@ -202,3 +202,5 @@ python3 services/code-loop/tests/test_cp_xxx.py                       # 单个�
 - **锁文件 [N/A]**：纯 Python 3.9+ 标准库 + 本地 SQLite，无可锁定第三方依赖图，生态锁文件不适用。
 - **`.env` [N/A]**：凭据走 `token_env` 环境变量或机器本地 `~/.code-loop/credentials/` 文件，不入仓库。
 - **lint / typecheck 已评估、暂不引入**：现有门禁（静态校验 + 全量单测）已覆盖历史真实故障模式（输出完整性、引用缺失、编码）；纯标准库代码库引入 mypy/flake8 的维护成本与当前收益不匹配。此为显式记录的例外，若后续依赖扩大须重新评估。
+
+Handler 可使用真实 worker 身份报告普通 PR 交付或阻塞结果；PR 发布仍校验当前版本的验证与报告。Reviewer 独立审查和合并后关闭 Issue 的独立判断不变；报告身份字符串本身不证明独立性。

@@ -6,6 +6,10 @@
 
 The Control Plane owns project coordination, project command ledgers, machine task ledgers, leases and platform publication. The dashboard derives views from collected facts; action callbacks own collection, replies and command dispatch. `cp.observer` supplies the shared platform snapshot store.
 
+### Handler reporting and PR review
+
+A Handler may report its own ordinary PR delivery or blocked outcome under its actual worker identity. PR publication requires passing verification and a judgment bound to the current execution head and item version; it does not turn the Handler report into a PR review. Reviewer executions retain independent-review and developer separation checks. Post-merge issue closure still requires an independent judgment. The report identity is a supplied string, not authenticated proof of independence.
+
 The merged server starts a configurable dashboard collection timer even when the UI listener cannot bind. Timer and manual UI requests submit through the same single-flight gate; all collectors serialize per database using a kernel-backed lock. Collection refreshes the dashboard snapshot cache and evaluates operator alerts. A zero interval disables the timer; failures are logged and retried at the next interval.
 
 ### Three-loop scheduling and concurrency

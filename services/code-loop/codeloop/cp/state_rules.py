@@ -487,7 +487,7 @@ DOCUMENTED_CODES = {
     'REPORT_CHANGED': '发布前报告必须与签发意图时的报告完全一致',
     'REVIEW_COMMENT_REQUIRED': 'PR 首评（无既有判词评论）必须走 review_comment 动作',
     'GATE_REPAIR_PROOF_REQUIRED': 'GATE_REPAIR 判 RESOLVED 须有绿色验证证据',
-    'INDEPENDENT_POST_MERGE_REVIEW_REQUIRED': 'POST_MERGE 关闭须独立判断证据（经 _require_independent_judgment 再抛）',
+    'INDEPENDENT_POST_MERGE_REVIEW_REQUIRED': 'POST_MERGE 关闭须独立判断证据（经 _require_current_judgment 再抛）',
     'JUDGMENT_STALE': '判定滞后于验证（report after verification）——证据新鲜度守卫',
     # 发布载荷与平台事实 / 竞态
     'PR_BRANCH_BASE_MISMATCH': 'create_pr 的 head/base 必须与执行分支/基线一致',
