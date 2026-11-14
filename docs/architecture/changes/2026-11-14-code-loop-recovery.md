@@ -1,0 +1,3 @@
+# Dashboard collection lifecycle
+
+The [recovery plan](../../plans/2026-11-14-code-loop-recovery.md) adds a server-owned timer for dashboard collection. Previously only manual and event-driven entry points refreshed the dashboard mirror, leaving alert evaluation silent during long idle periods. The timer shares the UI single-flight submission and snapshot cache invalidation path; a kernel-backed per-database lock also serializes CLI and Operator collectors. A headless collection handler keeps the timer running if the UI cannot bind. Shutdown rejects new submissions and waits briefly for in-flight collection; the database lock remains held until the collector or its process exits. Observer crawling remains independent.

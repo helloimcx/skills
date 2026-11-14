@@ -10,6 +10,7 @@ import sys
 import tempfile
 import threading
 import unittest
+from unittest.mock import patch
 import urllib.request
 from http.server import ThreadingHTTPServer
 from pathlib import Path
@@ -49,8 +50,8 @@ class MergedUiListenerTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
-        self._db = collect.DEFAULT_DB
-        collect.DEFAULT_DB = self.root / 'dash.sqlite'
+        self.home_patch = patch.object(cp_server, 'data_home', return_value=self.root)
+        self.home_patch.start()
         (self.root / 'projects').mkdir()
         self.settings = {'projects_root': str(self.root / 'projects'),
                          'ui_host': '127.0.0.1', 'ui_port': 0}
@@ -58,7 +59,7 @@ class MergedUiListenerTests(unittest.TestCase):
                                        self.root / 'registry.sqlite')
 
     def tearDown(self):
-        collect.DEFAULT_DB = self._db
+        self.home_patch.stop()
         self.tmp.cleanup()
 
     def test_ui_serves_views_from_the_merged_process(self):

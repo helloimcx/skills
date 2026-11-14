@@ -20,12 +20,13 @@ if str(SERVICE) not in sys.path:
     sys.path.insert(0, str(SERVICE))
 
 from codeloop import trigger  # noqa: E402  — spawn argv default for register
+from codeloop.cp.runtime import data_home  # noqa: E402
 from codeloop.dash import collect, notify, serve, store  # noqa: E402
 from codeloop.operator import config as operator_config  # noqa: E402
 from codeloop.operator import ingest as operator_ingest  # noqa: E402
 from codeloop.operator import store as operator_store  # noqa: E402
 
-DEFAULT_CONFIG = Path.home() / '.code-loop' / 'dashboard.json'
+DEFAULT_CONFIG = data_home() / 'dashboard.json'
 
 
 def load_config(path):
@@ -144,13 +145,13 @@ def main(argv=None):
     sub = parser.add_subparsers(dest='command', required=True)
 
     p_collect = sub.add_parser('collect', help='collect all projects into the global store')
-    p_collect.add_argument('--db', default=str(collect.DEFAULT_DB))
-    p_collect.add_argument('--root', default=str(collect.DEFAULT_ROOT))
+    p_collect.add_argument('--db', default=str(data_home() / 'dashboard.sqlite'))
+    p_collect.add_argument('--root', default=str(data_home() / 'projects'))
     p_collect.add_argument('--project', action='append', default=[],
                            help='restrict to org__repo (repeatable)')
 
     p_serve = sub.add_parser('serve', help='serve the read-only dashboard')
-    p_serve.add_argument('--db', default=str(collect.DEFAULT_DB))
+    p_serve.add_argument('--db', default=str(data_home() / 'dashboard.sqlite'))
     p_serve.add_argument('--host', default=serve.DEFAULT_HOST)
     p_serve.add_argument('--port', type=int, default=serve.DEFAULT_PORT)
     p_serve.add_argument('--interval', type=int, default=0, metavar='SECONDS',
@@ -172,12 +173,12 @@ def main(argv=None):
     p_reg.add_argument('--coordinator-model',
                        help='provider/model for Coordinator and child agent')
     p_reg.add_argument('--list', action='store_true', help='show registrations')
-    p_reg.add_argument('--db', default=str(collect.DEFAULT_DB))
+    p_reg.add_argument('--db', default=str(data_home() / 'dashboard.sqlite'))
 
     args = parser.parse_args(argv)
 
     if args.command == 'collect':
-        config = load_config(DEFAULT_CONFIG)
+        config = load_config(data_home() / 'dashboard.json')
         db = store.connect(args.db)
         # Operator subscription (2026-09-30): consume fresh alerts at this
         # evaluation point and ingest watchdog revivals. Disabled (default,
@@ -186,11 +187,12 @@ def main(argv=None):
             if config else None
         op_store = _open_operator_store(op_cfg)
         try:
-            summary = collect.collect(db, root=args.root,
-                                      only=args.project or None)
-            on_alerts = (lambda fresh: operator_ingest.ingest_alerts(
-                op_store, op_cfg, fresh)) if op_store is not None else None
-            note = notify.push_new_alerts(db, config, on_alerts=on_alerts)
+            with collect.collection_lock(args.db):
+                summary = collect.collect(db, root=args.root,
+                                          only=args.project or None, lock_held=True)
+                on_alerts = (lambda fresh: operator_ingest.ingest_alerts(
+                    op_store, op_cfg, fresh)) if op_store is not None else None
+                note = notify.push_new_alerts(db, config, on_alerts=on_alerts)
             # issue #302 defect 2: notify only from the collect CLI. Watchdog
             # revivals are consumed by the serve consumer's single-writer
             # cursor — a second process ingesting the same dashboard meta

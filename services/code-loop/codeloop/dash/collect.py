@@ -7,20 +7,25 @@ read-only copy of the project's SQLite. One project failing must not stop the
 others; the summary reports failures and the CLI maps them to a non-zero exit.
 """
 import json
+import contextlib
+import errno
+import os
+import queue
 import sqlite3
+import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from . import store
 from .agentruns import sweep as sweep_agent_runs
 from ..cp import observer
+from ..cp.runtime import data_home
 from ..cp.github import GitHub, GitHubError
 Gitea = GitHub
 GiteaError = GitHubError
 
-DEFAULT_DB = Path.home() / '.code-loop' / 'dashboard.sqlite'
-DEFAULT_ROOT = Path.home() / '.code-loop' / 'projects'
+DEFAULT_DB = data_home() / 'dashboard.sqlite'
+DEFAULT_ROOT = data_home() / 'projects'
 
 # How old the shared observer store may be before the collector crawls itself.
 # The CP server's driver keeps it far fresher; this only matters when the
@@ -35,6 +40,66 @@ CP_TABLES = {'work_items': 'work_items', 'executions': 'executions',
 
 class CollectError(RuntimeError):
     pass
+
+
+_collection_locks_guard = threading.Lock()
+_collection_locks = {}
+
+
+@contextlib.contextmanager
+def collection_lock(db_path, timeout=1.0):
+    """Serialize collectors for one DB across threads and processes; OS releases on exit."""
+    if str(db_path) == ':memory:':
+        db_path = None
+    key = str(Path(db_path).resolve()) if db_path else ':memory:'
+    with _collection_locks_guard:
+        lock = _collection_locks.setdefault(key, threading.Lock())
+    if not lock.acquire(timeout=timeout):
+        raise CollectError('collection already in progress')
+    try:
+        if not db_path:
+            yield
+            return
+        with open(key + '.collect.lock', 'a+b') as fh:
+            if os.name == 'nt':
+                import msvcrt
+                fh.seek(0)
+                if not fh.read(1):
+                    fh.write(b'0')
+                    fh.flush()
+                deadline = time.monotonic() + timeout
+                while True:
+                    try:
+                        fh.seek(0)
+                        msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)
+                        break
+                    except OSError as exc:
+                        if exc.errno not in (errno.EACCES, errno.EAGAIN, errno.EDEADLK):
+                            raise
+                        if time.monotonic() >= deadline:
+                            raise CollectError('collection already in progress') from exc
+                        time.sleep(0.1)
+            else:
+                import fcntl
+                deadline = time.monotonic() + timeout
+                while True:
+                    try:
+                        fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        break
+                    except BlockingIOError as exc:
+                        if time.monotonic() >= deadline:
+                            raise CollectError('collection already in progress') from exc
+                        time.sleep(0.1)
+            try:
+                yield
+            finally:
+                if os.name == 'nt':
+                    fh.seek(0)
+                    msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)
+                else:
+                    fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+    finally:
+        lock.release()
 
 
 def discover_projects(root):
@@ -168,12 +233,12 @@ def collect_project(db_path, config_path, now=None):
         db.close()
 
 
-DEFAULT_REGISTRY = Path.home() / '.code-loop' / 'server' / 'registry.sqlite'
+DEFAULT_REGISTRY = data_home() / 'server' / 'registry.sqlite'
 
 
-def collect_machines(db, registry_path=DEFAULT_REGISTRY):
+def collect_machines(db, registry_path=None):
     """Snapshot the server machine registry (read-only) when one exists."""
-    registry_path = Path(registry_path)
+    registry_path = Path(registry_path or (data_home() / 'server' / 'registry.sqlite'))
     if not registry_path.is_file():
         return None
     uri = 'file:%s?mode=ro' % registry_path.as_posix()
@@ -194,18 +259,13 @@ def collect_machines(db, registry_path=DEFAULT_REGISTRY):
         source.close()
 
 
-def collect(db, root=DEFAULT_ROOT, only=None, registry_path=None,
-            max_workers=5, db_path=None):
+def collect(db, root=None, only=None, registry_path=None,
+            max_workers=5, db_path=None, lock_held=False):
     """Collect every discovered project into an open store; failures isolated.
 
-    No process lock: overlapping schedules (a 2-minute task while a manual
-    POST /api/collect runs) are safe by construction, because concurrent
-    writers serialize on sqlite itself and every write is an idempotent
-    upsert. A filesystem lock was the original guard (issues #187/#205), but
-    it had no recovery from a leaked lock held by a live process — the holder
-    stayed alive forever and the stale-timeout takeover never fired, silently
-    stopping collection (2026-09-23). The lock is gone; the guarantees it
-    stood for live in the schema and the write path instead:
+    A kernel-backed lock serializes collection per dashboard database across
+    processes and releases automatically on process exit. The schema also
+    protects idempotency:
       * UNIQUE(project_id, number) on issues/prs and UNIQUE(project_id,
         cp_id) on the runtime mirrors make a racing duplicate insert a
         no-op upsert, never a duplicate row.
@@ -222,6 +282,16 @@ def collect(db, root=DEFAULT_ROOT, only=None, registry_path=None,
     silently discard another's uncommitted writes. max_workers defaults to 5
     (decision 2B). `db` stays the caller's connection for the single-threaded
     machine-registry snapshot."""
+    root = root or data_home() / 'projects'
+    if db_path is None:
+        db_path = db.execute('PRAGMA database_list').fetchone()[2]
+    if lock_held:
+        return _collect_locked(db, root, only, registry_path, max_workers, db_path)
+    with collection_lock(db_path):
+        return _collect_locked(db, root, only, registry_path, max_workers, db_path)
+
+
+def _collect_locked(db, root, only, registry_path, max_workers, db_path):
     configs = discover_projects(root)
     if only is not None:
         wanted = set(only)
@@ -232,7 +302,7 @@ def collect(db, root=DEFAULT_ROOT, only=None, registry_path=None,
         db_path = db.execute('PRAGMA database_list').fetchone()[2]
     failed = _collect_projects(db_path, configs, max_workers)
     try:
-        collect_machines(db, registry_path or DEFAULT_REGISTRY)
+        collect_machines(db, registry_path or (data_home() / 'server' / 'registry.sqlite'))
     except (sqlite3.Error, OSError) as exc:
         failed.append('machine registry: %s' % exc)
     # Agent-run archives: machine-local, project-independent, deterministic
@@ -312,14 +382,45 @@ def collect_operator(db, home=None, window_days=30):
 
 def _collect_projects(db_path, configs, max_workers):
     """Run the per-project crawls concurrently; each worker owns an
-    independent store connection (PR #180 MAJOR-1)."""
+    independent store connection (PR #180 MAJOR-1). Daemon workers do not
+    keep the server alive if a platform call never returns during shutdown."""
+    if max_workers <= 0:
+        raise ValueError('max_workers must be positive')
+    tasks = queue.Queue()
+    for config in configs:
+        tasks.put(config)
     failed = []
-    with ThreadPoolExecutor(max_workers=max_workers) as pool:
-        futures = {pool.submit(collect_project, db_path, config_path)
-                   for config_path in configs}
-        for future in futures:
+    errors = []
+
+    def worker():
+        while True:
             try:
-                future.result()
+                config = tasks.get_nowait()
+            except queue.Empty:
+                return
+            try:
+                collect_project(db_path, config)
             except CollectError as exc:
                 failed.append(str(exc))
+            except BaseException as exc:
+                errors.append(exc)
+            finally:
+                tasks.task_done()
+
+    started = 0
+    start_error = None
+    for _ in range(min(max_workers, len(configs))):
+        try:
+            threading.Thread(target=worker, daemon=True).start()
+            started += 1
+        except RuntimeError as exc:
+            start_error = exc
+            break
+    if start_error is not None and not started:
+        raise start_error
+    tasks.join()
+    if start_error is not None:
+        raise start_error
+    if errors:
+        raise errors[0]
     return failed
