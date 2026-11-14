@@ -24,7 +24,7 @@ DISPOSITION_STATUS = ('accepted', 'invalid', 'ignored', 'bug')
 _RAISE_RE = re.compile(r"raise\s+\w+\s*\(\s*'([^']*)'")
 _CODE_RE = re.compile(r'^([A-Z][A-Z0-9_]+)(?::|$)')
 # 补充面：不以 raise 字面量首参出现的码（如 gate.py 把码作为实参传给
-# _require_independent_judgment 再统一抛出）。只认带下划线或冒号引导的
+# _require_current_judgment 再统一抛出）。只认带下划线或冒号引导的
 # 带码字符串——纯状态字面量（'READY'/'SENT' 等无下划线）不入码集。
 _ARG_CODE_RE = re.compile(r"'([A-Z][A-Z0-9]*_[A-Z0-9_]+)'|'([A-Z][A-Z0-9_]+):[^']*'")
 

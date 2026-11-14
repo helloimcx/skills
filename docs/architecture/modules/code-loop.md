@@ -6,6 +6,10 @@
 
 The Control Plane owns project coordination, project command ledgers, machine task ledgers, leases and platform publication. The dashboard derives views from collected facts; action callbacks own collection, replies and command dispatch. `cp.observer` supplies the shared platform snapshot store.
 
+### Handler reporting and PR review
+
+A Handler may report its own ordinary PR delivery or blocked outcome under its actual worker identity. PR publication requires passing verification and a judgment bound to the current execution head and item version; it does not turn the Handler report into a PR review. Reviewer executions retain independent-review and developer separation checks. Post-merge issue closure still requires an independent judgment. The report identity is a supplied string, not authenticated proof of independence.
+
 ### Three-loop scheduling and concurrency
 
 `discover`, `handler` and `reviewer` use one execution and fencing token per claimed item. Normal Handler and Reviewer rounds may continue claiming after the current item has been published and its worktree cleaned. The default `max_parallel: null` leaves concurrency bounded by actual resource locks; a positive configured integer restores a per-loop slot limit. Issue implementations and PR repairs lock their Issue, PR and branch identities. Repository path locks apply only to scopes declared in `issue_scopes`; unrelated work can run in independent worktrees, while Git reports later merge conflicts. Dashboard-targeted rounds keep the selected PR scope.

@@ -71,6 +71,7 @@ python scripts/control_plane.py verify --execution <EXECUTION_ID> --token <TOKEN
   - **校验命令**：必须运行 `python scripts/check_ledger.py` 确保 exit 0，否则拒绝完成。
 
 ### §7 报告与发布（Report & Publish）
+普通 PR 交付及阻塞结果可由 Handler 用真实 worker 身份在报告的 `reviewer` 字段自报；这只是执行结果，不是独立 PR 审查或合并批准。PR 发布仍须当前 head 和工作项版本的有效报告与通过的验证。关闭 Issue 仍须独立判断；Reviewer 轮的独立审查要求不变。
 ```bash
 python scripts/control_plane.py report --execution <EXECUTION_ID> --token <TOKEN> --file report.json
 python scripts/control_plane.py publish --execution <EXECUTION_ID> --token <TOKEN>

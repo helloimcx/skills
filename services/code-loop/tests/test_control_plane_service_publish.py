@@ -26,6 +26,90 @@ from codeloop.cp.service import Service
 from _service_test_base import Platform, git, ServiceTestsBase
 
 class ServicePublishTests(ServiceTestsBase):
+    def test_handler_self_report_publishes_pr_delivery(self):
+        for action in ('create_pr', 'edit_pr'):
+            with self.subTest(action=action):
+                wt, cfg = self._worktree(origin=True)
+                s, p = self._fresh(cfg)
+                p.data['issues'] = [self.issue()]
+                if action == 'edit_pr':
+                    pr = self.pr()
+                    pr['reviews'] = [{'user': {'id': 9}, 'state': 'REQUEST_CHANGES', 'body': 'fix it'}]
+                    p.data['prs'] = [pr]
+                    payload = {'number': 2, 'title': 'fix', 'body': 'fixed'}
+                else:
+                    p.data['prs'] = []
+                    payload = {'title': 'fix', 'body': 'Closes #1\n\nfix',
+                               'head': 'fix/mocx/bug', 'base': 'main'}
+                s.sync()
+                item = next(x for x in s.store.items('handler') if x['state'] == 'READY')
+                e = s.claim('handler', 'worker', item_id=item['id'])
+                s.bind(e['id'], e['token'], wt, 'fix/mocx/bug')
+                self.assertTrue(s.verify(e['id'], e['token'])['passed'])
+                s.report(e['id'], e['token'], {'decision': 'APPROVE', 'reviewer': 'worker',
+                         'summary': 'completed', 'action': action, 'payload': payload})
+                s.publish(e['id'], e['token'])
+                self.assertTrue(p.writes)
+
+    def test_handler_self_report_still_requires_current_verified_head(self):
+        wt, cfg = self._worktree(origin=True)
+        s, p = self._fresh(cfg)
+        p.data['issues'], p.data['prs'] = [self.issue()], []
+        s.sync()
+        e = s.claim('handler', 'worker')
+        s.bind(e['id'], e['token'], wt, 'fix/mocx/bug')
+        report = {'decision': 'APPROVE', 'reviewer': 'worker', 'summary': 'done',
+                  'action': 'create_pr', 'payload': {'title': 'fix', 'body': 'Closes #1',
+                    'head': 'fix/mocx/bug', 'base': 'main'}}
+        s.report(e['id'], e['token'], report)
+        with self.assertRaisesRegex(ValueError, 'RUNNER_EVIDENCE_REQUIRED'):
+            s.publish(e['id'], e['token'])
+        self.assertTrue(s.verify(e['id'], e['token'])['passed'])
+        git(wt, 'commit', '--allow-empty', '-m', 'change verified head')
+        with self.assertRaises(ValueError):
+            s.publish(e['id'], e['token'])
+        self.assertFalse(p.writes)
+
+    def test_close_issue_still_rejects_handler_self_report(self):
+        self.platform.data['issues'] = [self.issue()]
+        pr = self.pr()
+        pr.update(merged=True, state='closed')
+        self.platform.data['prs'] = [pr]
+        self.s.sync()
+        e = self.s.claim('handler', 'worker')
+        with self.assertRaisesRegex(ValueError, 'INDEPENDENT_REVIEW_REQUIRED'):
+            self.s.report(e['id'], e['token'], {'decision': 'RESOLVED',
+                'reviewer': 'worker', 'summary': 'done', 'action': 'close_issue',
+                'payload': {'number': 1}})
+        with self.assertRaisesRegex(ValueError, 'INDEPENDENT_REVIEW_REQUIRED'):
+            self.s.report(e['id'], e['token'], {'decision': 'RESOLVED',
+                'reviewer': 'worker', 'summary': 'done'})
+
+    def test_handler_blocked_conflict_self_report_publishes_evidence(self):
+        pr = self.pr()
+        pr['mergeable'] = False
+        self.platform.data['prs'] = [pr]
+        self.s.sync()
+        item = next(x for x in self.s.store.items('handler') if x['state'] == 'READY')
+        e = self.s.claim('handler', 'worker', item_id=item['id'])
+        self.s.report(e['id'], e['token'], {'decision': 'BLOCKED', 'reviewer': 'worker',
+            'summary': 'conflict needs a decision', 'action': 'comment_pr',
+            'payload': {'number': 2, 'body': 'Conflict requires a decision.'}})
+        self.s.publish(e['id'], e['token'])
+        self.assertIn('Conflict requires a decision.', self.platform.writes[-1][1]['body'])
+
+    def test_reviewer_still_cannot_report_as_its_execution_worker(self):
+        pr = self.pr()
+        pr['body'] = 'fix'
+        self.platform.data['issues'] = []
+        self.platform.data['prs'] = [pr]
+        self.s.sync()
+        e = self.s.claim('reviewer', 'worker')
+        with self.assertRaisesRegex(ValueError, 'INDEPENDENT_REVIEW_REQUIRED'):
+            self.s.report(e['id'], e['token'], {'decision': 'Changes requested',
+                'reviewer': 'worker', 'summary': 'issue found',
+                'action': 'review_comment', 'payload': {'number': 2, 'body': 'issue'}})
+
     def _repair_events(self, service):
         rows = service.store.db.execute(
             "SELECT id,payload FROM events WHERE kind='pr.handler_repair_needed' "

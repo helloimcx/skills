@@ -299,10 +299,10 @@ def authorize(service, item, source, result):
         _check_pr_targets(source, action, p, result['decision'])
 
 
-def _require_independent_judgment(service, e, context, error):
+def _require_current_judgment(service, e, context, error, *, independent=True):
     judgments = service.store.evidence(e['id'], 'judgment')
     judgment = json.loads(judgments[-1]['payload']) if judgments else {}
-    if (not judgments or judgment.get('reviewer') == e['worker']
+    if (not judgments or (independent and judgment.get('reviewer') == e['worker'])
             or judgment.get('head') != context['head']
             or judgment.get('input_version') != e['item_version']):
         raise ValueError(error)
@@ -325,7 +325,7 @@ def _gate_close_issue(service, e, source, result, context):
     if (context['head'] != source['base_sha'] or not ev.get('passed')
             or ev.get('head') != context['head'] or ev.get('input_version') != e['item_version']):
         raise ValueError('POST_MERGE_VERIFICATION_STALE')
-    _require_independent_judgment(service, e, context,
+    _require_current_judgment(service, e, context,
                                   'INDEPENDENT_POST_MERGE_REVIEW_REQUIRED')
 
 
@@ -364,7 +364,8 @@ def publish_gate(service, e, item, source, result, context=None):
     if kind == 'handler' and decision != 'APPROVE':
         raise ValueError('APPROVE_REQUIRED')
     context = _require_green_evidence(service, e, context)
-    _require_independent_judgment(service, e, context, 'JUDGMENT_STALE: report after verification')
+    _require_current_judgment(service, e, context, 'JUDGMENT_STALE: report after verification',
+                              independent=kind != 'handler')
     if kind == 'reviewer':
         _gate_required_checks(service, source, context)
 
@@ -420,7 +421,11 @@ def _validate_gate_repair(service, item, payload, result, eid):
 
 
 def _require_independent_reviewer(service, e, item, payload, result):
-    if result['reviewer'] == e['worker']:
+    action = result.get('action')
+    handler_self_report = (item['kind'] == 'handler' and (
+        (action in ('create_pr', 'edit_pr') and result['decision'] == 'APPROVE')
+        or (result['decision'] == 'BLOCKED' and action in (None, 'comment_pr'))))
+    if not handler_self_report and result['reviewer'] == e['worker']:
         raise ValueError('INDEPENDENT_REVIEW_REQUIRED')
     if item['kind'] != 'reviewer' or not payload.get('pr'):
         return

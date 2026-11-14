@@ -220,6 +220,20 @@ class WorkerTests(unittest.TestCase):
         status = w2.status()
         self.assertEqual(status['executions'].get('SUCCEEDED'), 1)
 
+    def test_handler_self_report_over_http(self):
+        self.platform.data['issues'] = [self.issue()]
+        w = self.worker()
+        w.sync()
+        e = w.claim('handler', 'builder')
+        w.bind(e['id'], e['token'], str(self.wt), 'fix/mocx/bug')
+        self.assertTrue(w.verify(e['id'], e['token'])['passed'])
+        w.report(e['id'], e['token'], {'decision': 'APPROVE',
+                 'reviewer': e['worker'], 'summary': 'done', 'action': 'create_pr',
+                 'payload': {'title': 'fix', 'body': 'Closes #1\n\ndone',
+                             'head': 'fix/mocx/bug', 'base': 'main'}})
+        self.assertEqual(w.publish(e['id'], e['token'])['number'], 100)
+        self.assertEqual(w.status()['executions'].get('SUCCEEDED'), 1)
+
     def test_repo_exam_reaches_the_worker_through_the_claim(self):
         """端到端：服务端按 base_sha 读仓库考题 → policy 下发 → worker verify
         执行仓库命令（机器 config 的 verification 让位）。"""
