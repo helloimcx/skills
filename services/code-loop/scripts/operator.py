@@ -41,6 +41,7 @@ else:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
     from codeloop.operator import face, store as op_store  # noqa: E402
+    from codeloop.operator.drill import run_drill  # noqa: E402
 
     LOCAL_VERBS = {'no_op', 'sweep_expired'}
 
@@ -147,6 +148,12 @@ else:
         return 0
 
 
+    def cmd_drill(_args):
+        result = run_drill()
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0 if result['passed'] else 1
+
+
     def main(argv=None):
         parser = argparse.ArgumentParser(prog='operator.py', description=__doc__)
         sub = parser.add_subparsers(dest='command', required=True)
@@ -161,10 +168,13 @@ else:
         p_rep.add_argument('--execution', required=True)
         p_rep.add_argument('--token', type=int, required=True)
         p_rep.add_argument('--file', required=True)
+        sub.add_parser('drill', help='run isolated built-in Operator scenarios')
         args = parser.parse_args(argv)
         if args.command == 'status':
             cmd_status(args)
             return 0
+        if args.command == 'drill':
+            return cmd_drill(args)
         if args.command == 'act':
             return cmd_act(args)
         return cmd_report(args)
