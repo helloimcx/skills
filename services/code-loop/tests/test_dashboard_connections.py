@@ -179,7 +179,11 @@ class ConnectionTests(unittest.TestCase):
         import cp_server
         from codeloop.dash import collect
         from codeloop.cp.server import Coordinator
-        with patch.object(collect, 'DEFAULT_DB', self.path), \
+        target = self.path.parent / 'dashboard.sqlite'
+        copied = store.connect(target)
+        self.db.backup(copied)
+        copied.close()
+        with patch.object(cp_server, 'data_home', return_value=self.path.parent), \
                 patch.object(cp_server, '_dash_config', return_value=None):
             server, initial_db = cp_server._ui_listener(
                 {'ui_port': 0, 'projects_root': str(self.path.parent / 'projects')},

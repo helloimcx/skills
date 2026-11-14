@@ -8,6 +8,9 @@ code-loop 的机器本地确定性运行时（服务单元）：Control Plane �
 - 依赖方向单向：skill → service。本服务不 import `skills/` 任何模块；规则文档、验证命令等均为机器本地配置注入的路径。
 - 机器本地状态全部在 `~/.code-loop/`（config、SQLite、锁、钉扎证书、凭据、dashboard.sqlite、`server/`），不入任何仓库。
 - 平台事实只有一条爬取路径（`cp/observer.py` + `~/.code-loop/observer.sqlite`）：CP server 的 driver 线程按 `observer_period`（默认 120s）刷新，CP 与 dashboard 都读同一份；CP/collector 仅在 store 缺失或过旧时内联爬取兜底（fail-open，语义不变）。
+- 看板镜像由合并服务定期采集全量项目并评估告警，`server.json` 的 `collection_period` 默认 1800 秒，设为 0 可关闭；与页面手动采集共享单飞入口。采集异常写入服务错误日志，下轮继续重试。
+- 若采集中的平台调用永久卡住，服务仍会记录后续采集跳过，但不会强行夺取仍存活的锁；需排查并重启服务，进程退出会释放系统锁。
+- 控制面服务和看板采集入口在运行时读取 `CODE_LOOP_HOME` 作为默认数据目录；测试也应隔离 `HOME`、凭据和会话归档。其他组件的导入期默认路径不属于此保证。
 - **远程接入（可选）**：局域网/VPN 内其他开发机可作为 discover/handler/reviewer worker 接入。协调状态单点在服务端（SQLite/BEGIN IMMEDIATE/fencing/租约/outbox 语义零改动），worker 本地执行 worktree 校验、验证命令与 git push，经 TLS（ca 钉扎或 TOFU 指纹）+ 每机器 Bearer token 通信。统一管理（注册/授权/启停/吊销）只走服务端本机 `cp_server.py`，不开网络管理端点。契约与部署见 `skills/code-loop/references/control-plane.md` 远程模式一节。
 
 ## 面板 SQLite 连接与 CPU 排查
