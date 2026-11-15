@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from pathlib import Path
 
@@ -219,6 +220,24 @@ class WorkerTests(unittest.TestCase):
         # D2: publish derived the terminal state server-side.
         status = w2.status()
         self.assertEqual(status['executions'].get('SUCCEEDED'), 1)
+
+    def test_http_claim_does_not_requeue_item_removed_by_sync(self):
+        self.platform.data['issues'] = [self.issue()]
+        w = self.worker()
+        w.sync()
+        e = w.claim('handler', 'builder')
+        self.assertIsNotNone(e)
+        self.platform.data['issues'] = []
+        db = sqlite3.connect(str(self.root / 'observer.sqlite'))
+        db.execute("UPDATE meta SET value=? WHERE key='synced_at'", (json.dumps(0),))
+        db.commit()
+        db.close()
+        w.sync()
+        db = sqlite3.connect(str(self.root / 'projects/a__b/state/control-plane.sqlite'))
+        db.execute('UPDATE executions SET expires_at=? WHERE id=?', (time.time() - 1, e['id']))
+        db.commit()
+        db.close()
+        self.assertIsNone(w.claim('handler', 'next'))
 
     def test_handler_self_report_over_http(self):
         self.platform.data['issues'] = [self.issue()]
