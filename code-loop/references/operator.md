@@ -12,7 +12,7 @@ Operator 是 CP 侧的全局运维协调者，跨项目和 worker 消费持久�
 
 具体流程如下：
 - **事件派发**：CP 新观察到 changes-requested review、merge conflict 或 discover 停摆后，Operator 将 typed task 投递给获授权且已注册项目的兼容 worker。Worker hello 会公告 task schema 版本；旧 worker 不接收不支持的 typed task。首次启用不回补历史 PR 事件；任务默认保留七天，离线任务重连后会重新检查 PR head 或停摆状态。持续冲突下 PR head/base 更新时也会生成新的 repair 事件。
-- **本机协调**：Coordinator runtime/model 从 worker 本机或项目注册读取。PR repair 必须通过 runtime 原生 subagent/Task 能力拉起独立 Handler；WorkerAgent 还会确认对应 CP execution 已完成 `verify/report/publish` 并进入 `SUCCEEDED`，之后才把 task 标为成功。
+- **本机协调**：Coordinator runtime/model 从 worker 本机或项目注册读取。PR repair 必须通过 runtime 原生 subagent/Task 能力拉起独立 Handler；WorkerAgent 还会确认对应 CP execution 已完成 `verify/report/publish` 并进入 `SUCCEEDED`，之后才把 task 标为成功。PR repair 的本地日志仅保存脱敏的结构化证据；Claude 及提供 input 的 OpenCode 调用需要匹配准备的 execution。为兼容旧 OpenCode 事件，缺失 input 或独立 session 事件时允许受限回退，无法从缺失字段单独证明调用绑定或顶层身份。独立日志进程不保证追踪所有脱离进程组的后代，原有任务恢复与清理限制仍适用。
 - **worker 诊断**：`worker.project_diagnose` 汇集 CP 最近 execution、WorkerAgent 连接状态、项目注册、本机 watchdog/worker 日志和已登记 scheduler 状态。缺失证据必须标为未知。
 - **受限自愈**：诊断 Coordinator 只能返回获授权的 action ID；worker 每次动作前再核对同一停摆仍对应相同的最后 execution、本机注册、CP 活动 execution 和目标状态，之后才调用固定 adapter。重复 action ID 在一次结果中只执行一次；任意 shell 和模型提供的 target/argv 都不会执行。
 - **中心侧升级**：本地 Operator 仍负责告警记录、事件审计和中心侧升级动作；worker 诊断/修复结果保存在 machine task ledger，并由 Operator 消费完成事件。

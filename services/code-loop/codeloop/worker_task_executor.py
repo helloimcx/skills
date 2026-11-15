@@ -7,12 +7,16 @@ No model-produced command or target reaches a subprocess.
 """
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 import os
 from pathlib import Path
 import re
 import socket
 import subprocess
+import sys
+import threading
 import time
 
 from . import review_round, trigger
@@ -189,11 +193,137 @@ class WorkerTaskExecutor:
         path.mkdir(parents=True, exist_ok=True)
         return path / (safe + '.log')
 
+    @staticmethod
+    def _open_private(path):
+        flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, 'O_NOFOLLOW', 0)
+        fd = os.open(str(path), flags, 0o600)
+        try:
+            if hasattr(os, 'fchmod'):
+                os.fchmod(fd, 0o600)
+            return os.fdopen(fd, 'w', encoding='utf-8')
+        except Exception:
+            os.close(fd)
+            raise
+
+    @staticmethod
+    def _repair_log_event(line, agent_name, execution_id, fingerprint_key):
+        """Keep only structured evidence; never persist model or tool text."""
+        try:
+            event = json.loads(line)
+        except (ValueError, RecursionError):
+            return '{invalid-json\n' if line.lstrip().startswith('{') else ''
+        if not isinstance(event, dict):
+            return ''
+
+        def safe_id(value):
+            if not isinstance(value, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', value):
+                return ''
+            digest = hmac.new(fingerprint_key, value.encode('utf-8'), hashlib.sha256).hexdigest()
+            return 'call_' + digest[:32]
+
+        def safe_status(value):
+            if value is None:
+                return None
+            allowed = ('completed', 'complete', 'success', 'error', 'failed',
+                       'running', 'pending')
+            return value if isinstance(value, str) and value.lower() in allowed else 'unknown'
+
+        kind = event.get('type')
+        if agent_name == 'claude' and kind in ('assistant', 'user'):
+            message = event.get('message')
+            content = message.get('content') if isinstance(message, dict) else None
+            parts = []
+            for part in content if isinstance(content, list) else ():
+                if not isinstance(part, dict):
+                    continue
+                if kind == 'assistant' and part.get('type') == 'tool_use':
+                    name = str(part.get('name') or '').lower()
+                    if name not in ('agent', 'task'):
+                        continue
+                    data = part.get('input')
+                    if not isinstance(data, dict):
+                        data = {}
+                    bound = bool(safe_id(execution_id)) and WorkerTaskExecutor._bound_to_execution(data, execution_id)
+                    background = data.get('run_in_background', False)
+                    if not isinstance(background, bool):
+                        background = 'invalid'
+                    try:
+                        fingerprint = hmac.new(fingerprint_key, json.dumps(
+                            data, sort_keys=True, ensure_ascii=True).encode('utf-8'),
+                            hashlib.sha256).hexdigest()
+                    except (TypeError, ValueError, RecursionError):
+                        return '{invalid-json\n'
+                    parts.append({'type': 'tool_use', 'name': name,
+                                  'id': safe_id(part.get('id')),
+                                  'input': {'prompt': 'execution=' + execution_id if bound else '',
+                                            'run_in_background': background,
+                                            'fingerprint': fingerprint}})
+                elif kind == 'user' and part.get('type') == 'tool_result':
+                    is_error = part.get('is_error', False)
+                    if not isinstance(is_error, bool):
+                        is_error = 'invalid'
+                    parts.append({'type': 'tool_result',
+                                  'tool_use_id': safe_id(part.get('tool_use_id')),
+                                  'is_error': is_error})
+            if not parts:
+                return ''
+            clean = {'type': kind, 'parent_tool_use_id':
+                     'nested' if event.get('parent_tool_use_id') else None,
+                     'message': {'content': parts}}
+            meta = event.get('tool_use_result')
+            if isinstance(meta, dict):
+                clean['tool_use_result'] = {'status': safe_status(meta.get('status'))}
+            return json.dumps(clean, ensure_ascii=False) + '\n'
+        if agent_name == 'opencode' and kind == 'tool_use':
+            part = event.get('part')
+            if not isinstance(part, dict) or str(part.get('tool') or '').lower() not in ('task', 'subagent'):
+                return ''
+            state = part.get('state') if isinstance(part.get('state'), dict) else {}
+            data = state.get('input')
+            bound = bool(safe_id(execution_id)) and WorkerTaskExecutor._bound_to_execution(data, execution_id)
+            try:
+                child = WorkerTaskExecutor._child_session_id(state)
+            except RecursionError:
+                return '{invalid-json\n'
+            clean_state = {'status': safe_status(state.get('status'))}
+            if 'input' in state and not isinstance(data, dict):
+                clean_state['input'] = 'invalid'
+            if isinstance(data, dict):
+                try:
+                    fingerprint = hmac.new(fingerprint_key, json.dumps(
+                        data, sort_keys=True, ensure_ascii=True).encode('utf-8'),
+                        hashlib.sha256).hexdigest()
+                except (TypeError, ValueError, RecursionError):
+                    return '{invalid-json\n'
+                clean_state['input'] = {'prompt': 'execution=' + execution_id if bound else '',
+                                        'fingerprint': fingerprint}
+            if child and re.fullmatch(r'ses_[A-Za-z0-9_-]{1,120}', child):
+                clean_state['output'] = {'sessionId': child}
+            clean = {'type': 'tool_use', 'part': {
+                'id': safe_id(part.get('callID') or part.get('id') or state.get('callID')),
+                'tool': str(part['tool']).lower(), 'state': clean_state}}
+            session = event.get('sessionID')
+            if isinstance(session, str) and re.fullmatch(r'ses_[A-Za-z0-9_-]{1,120}', session):
+                clean['sessionID'] = session
+            return json.dumps(clean) + '\n'
+        # A safe marker distinguishes a structured stream from a missing log.
+        if kind in ('system', 'result', 'text', 'step_start', 'step_finish'):
+            clean = {'type': 'session_marker'}
+            session = event.get('sessionID')
+            if isinstance(session, str) and re.fullmatch(r'ses_[A-Za-z0-9_-]{1,120}', session):
+                clean['sessionID'] = session
+            return json.dumps(clean) + '\n'
+        return ''
+
     def _run_session(self, task, agent_name, argv, prompt, cwd,
                      execution_id=None, token=None, worktree=None):
         log_path = self._runtime_log(task['id'])
         prompt_path = log_path.with_suffix('.prompt')
         env = self._runtime_environment(agent_name, task['task_type'])
+        if task['task_type'] == 'pr.repair':
+            return self._run_supervised_repair(
+                task, agent_name, argv, prompt, cwd, env,
+                execution_id, token, worktree, log_path)
         spawn_kwargs = {'cwd': str(cwd), 'stdin': None, 'stdout': None,
                         'stderr': subprocess.STDOUT, 'env': env}
         if os.name == 'nt':
@@ -246,6 +376,93 @@ class WorkerTaskExecutor:
                              % (returncode, stdout[-800:]))
         return stdout, str(log_path)
 
+    def _run_supervised_repair(self, task, agent_name, argv, prompt, cwd, env,
+                               execution_id, token, worktree, log_path):
+        # Keep the log projector alive if WorkerAgent restarts. The recorded PID
+        # identifies this process; no descendant-lifetime guarantee is implied.
+        launch = {'agent_name': agent_name, 'execution_id': execution_id or '',
+                  'argv': list(argv), 'cwd': str(cwd), 'prompt': prompt,
+                  'env': env, 'log_path': str(log_path),
+                  'timeout': RUNTIME_TIMEOUT_SECONDS}
+        injected_runner = getattr(self.agent, '_run_worker_runtime', None)
+        popen = getattr(self.agent, 'agent_popen_fn', subprocess.Popen)
+        if callable(injected_runner) and popen is not subprocess.Popen:
+            if hasattr(self.agent, 'runtime_argv'):
+                self.agent.runtime_argv = list(argv) + [RUNTIME_STDIN_MARKER]
+            record_runtime = getattr(self.agent, '_record_worker_task_runtime', None)
+            if callable(record_runtime):
+                record_runtime(task['id'], os.getpid(), str(log_path),
+                               execution_id=execution_id, token=token,
+                               worktree=worktree)
+            result = injected_runner(argv, prompt, cwd, str(log_path), env=env)
+            fingerprint_key = os.urandom(32)
+            with self._open_private(log_path) as log:
+                for line in (getattr(result, 'stdout', '') or '').splitlines(True):
+                    safe = self._repair_log_event(
+                        line, agent_name, execution_id or '', fingerprint_key)
+                    if safe:
+                        log.write(safe)
+            if getattr(result, 'returncode', 1) != 0:
+                raise ValueError('COORDINATOR_RUNTIME_FAILED')
+            return log_path.read_text(encoding='utf-8', errors='replace'), str(log_path)
+
+        supervisor_env = dict(os.environ, PYTHONIOENCODING='utf-8')
+        kwargs = {'stdin': subprocess.PIPE, 'stdout': subprocess.PIPE,
+                  'stderr': subprocess.DEVNULL, 'env': supervisor_env,
+                  'cwd': str(Path(__file__).resolve().parent.parent)}
+        if os.name == 'nt':
+            kwargs['creationflags'] = (getattr(subprocess, 'DETACHED_PROCESS', 0)
+                                       | getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+        else:
+            kwargs['start_new_session'] = True
+        supervisor = None
+        status_received = False
+        try:
+            supervisor = subprocess.Popen(
+                [sys.executable, '-u', '-m', 'codeloop.worker_task_supervisor'], **kwargs)
+            record_runtime = getattr(self.agent, '_record_worker_task_runtime', None)
+            if callable(record_runtime):
+                try:
+                    record_runtime(task['id'], supervisor.pid, str(log_path),
+                                   execution_id=execution_id, token=token, worktree=worktree)
+                except Exception:
+                    supervisor.stdin.close()
+                    supervisor.wait(timeout=5)
+                    raise
+            supervisor.stdin.write(json.dumps(
+                launch, ensure_ascii=True, separators=(',', ':')).encode('utf-8'))
+            supervisor.stdin.close()
+            # The sink reports the direct runtime result after flushing its
+            # evidence, but remains alive to drain inherited background stdout.
+            result = []
+            def read_result():
+                result.append(supervisor.stdout.readline())
+            reader = threading.Thread(target=read_result, daemon=True)
+            reader.start()
+            reader.join(timeout=RUNTIME_TIMEOUT_SECONDS + 10)
+            if reader.is_alive() or not result:
+                raise ValueError('COORDINATOR_RUNTIME_FAILED')
+            supervisor.stdout.close()
+            status_received = bool(result[0])
+            status = result[0].strip()
+            if status_received:
+                # The sink may continue draining a background writer after
+                # reporting the runtime result. Reap it when it finally exits.
+                threading.Thread(target=supervisor.wait, daemon=True).start()
+            if status == b'124':
+                raise ValueError('COORDINATOR_RUNTIME_TIMEOUT')
+            if status != b'0':
+                raise ValueError('COORDINATOR_RUNTIME_FAILED')
+        except (OSError, subprocess.SubprocessError, ValueError) as exc:
+            if supervisor is not None and supervisor.poll() is None and not status_received:
+                supervisor.kill()
+                supervisor.wait()
+            if supervisor is not None and supervisor.stdout and not supervisor.stdout.closed:
+                supervisor.stdout.close()
+            detail = str(exc) if str(exc) == 'COORDINATOR_RUNTIME_TIMEOUT' else 'COORDINATOR_RUNTIME_FAILED'
+            raise ValueError(detail) from None
+        return log_path.read_text(encoding='utf-8', errors='replace'), str(log_path)
+
     @staticmethod
     def _output_text(stdout):
         parts = []
@@ -280,91 +497,214 @@ class WorkerTaskExecutor:
         return list(dict.fromkeys(_SESSION_ID.findall((stdout or '') + '\n' + (text or ''))))
 
     @staticmethod
-    def _native_handler_call(stdout, agent_name):
-        """Return evidence of a completed native child tool call from runtime events."""
+    def _coordinator_session_from_events(events):
+        sessions = set()
+        for event in events:
+            if event.get('type') not in ('session_marker', 'text', 'step_start', 'step_finish'):
+                continue
+            session = event.get('sessionID')
+            if isinstance(session, str) and re.fullmatch(r'ses_[A-Za-z0-9_-]{1,120}', session):
+                sessions.add(session)
+        if not sessions:
+            # Legacy OpenCode streams may contain only the task tool event.
+            # Preserve that format if every tool event names the same session.
+            sessions = {event.get('sessionID') for event in events
+                        if event.get('type') == 'tool_use'
+                        and isinstance(event.get('sessionID'), str)
+                        and re.fullmatch(r'ses_[A-Za-z0-9_-]{1,120}', event['sessionID'])}
+        return next(iter(sessions)) if len(sessions) == 1 else None
+
+    @staticmethod
+    def _coordinator_session_id(stdout):
         events = []
         for line in (stdout or '').splitlines():
             try:
+                event = json.loads(line)
+            except (ValueError, RecursionError):
+                continue
+            if isinstance(event, dict):
+                events.append(event)
+        return WorkerTaskExecutor._coordinator_session_from_events(events)
+
+    @staticmethod
+    def _native_handler_call(stdout, agent_name, execution_id):
+        """Classify native child evidence without returning tool output or prompts.
+
+        Claude stream events may include nested agents. Only one coordinator's
+        top-level tool call can satisfy the prepared Handler contract. A tool
+        result must match its ID; an Agent result must explicitly be complete.
+        """
+        events = []
+        malformed = False
+        for line in (stdout or '').splitlines():
+            try:
                 value = json.loads(line)
-            except ValueError:
+            except (ValueError, RecursionError):
+                # Runtime progress headers are harmless; a truncated JSON event
+                # could hide a second call or result, so never infer success.
+                malformed |= line.lstrip().startswith('{')
                 continue
             if isinstance(value, dict):
                 events.append(value)
+        if malformed or (stdout and not events):
+            return {'status': 'unsupported'}
+        if not events:
+            return {'status': 'missing_log'}
+        try:
+            if agent_name == 'claude':
+                return WorkerTaskExecutor._claude_handler_evidence(events, execution_id)
+            if agent_name == 'opencode':
+                return WorkerTaskExecutor._opencode_handler_evidence(events, execution_id)
+        except (RecursionError, TypeError):
+            return {'status': 'unsupported'}
+        return {'status': 'unsupported'}
 
-        def child_session(value):
-            if isinstance(value, dict):
-                for key in ('sessionID', 'sessionId', 'session_id',
-                            'childSessionId', 'child_session_id'):
-                    candidate = value.get(key)
-                    if isinstance(candidate, str) and candidate.startswith('ses_'):
-                        return candidate
-                for item in value.values():
-                    found = child_session(item)
-                    if found:
-                        return found
-            elif isinstance(value, list):
-                for item in value:
-                    found = child_session(item)
-                    if found:
-                        return found
-            return None
-
-        if agent_name == 'opencode':
-            calls = {}
-            for event in events:
-                if event.get('type') != 'tool_use':
+    @staticmethod
+    def _claude_handler_evidence(events, execution_id):
+        calls, results = {}, {}
+        for event in events:
+            if event.get('parent_tool_use_id'):
+                continue
+            message = event.get('message')
+            content = message.get('content') if isinstance(message, dict) else None
+            if not isinstance(content, list):
+                continue
+            # Claude's result metadata belongs to the event, not an individual
+            # block. It cannot prove which call completed when blocks are mixed.
+            if (event.get('type') == 'user'
+                    and isinstance(event.get('tool_use_result'), dict)
+                    and sum(isinstance(p, dict) and p.get('type') == 'tool_result'
+                            for p in content) > 1):
+                return {'status': 'unsupported'}
+            for part in content:
+                if not isinstance(part, dict):
                     continue
-                part = event.get('part') if isinstance(event.get('part'), dict) else {}
-                if str(part.get('tool') or '').lower() not in ('task', 'subagent'):
-                    continue
-                state = part.get('state') if isinstance(part.get('state'), dict) else {}
-                call_id = part.get('callID') or part.get('id') or state.get('callID')
-                if not call_id:
-                    continue
-                status = str(state.get('status') or '').lower()
-                calls[str(call_id)] = {
-                    'tool_call_id': str(call_id),
-                    'session_id': child_session(state),
-                    'status': status,
-                    'error': str(state.get('error') or 'native subagent tool failed')
-                    if status == 'error' else None}
-            completed = [call for call in calls.values()
-                         if call['status'] in ('completed', 'complete', 'success')]
-            if completed:
-                return completed[-1]
-            errors = [call for call in calls.values() if call['error']]
-            return errors[-1] if errors else None
-
-        if agent_name == 'claude':
-            tool_calls = {}
-            tool_results = {}
-            for event in events:
-                message = event.get('message')
-                content = message.get('content') if isinstance(message, dict) else None
-                if not isinstance(content, list):
-                    continue
-                for part in content:
-                    if not isinstance(part, dict):
+                if event.get('type') == 'assistant' and part.get('type') == 'tool_use':
+                    name = str(part.get('name') or '').lower()
+                    if name not in ('task', 'agent'):
                         continue
-                    if (event.get('type') == 'assistant'
-                            and part.get('type') == 'tool_use'
-                            and str(part.get('name') or '').lower() == 'task'):
-                        tool_id = part.get('id')
-                        if isinstance(tool_id, str) and tool_id:
-                            tool_calls[tool_id] = child_session(part.get('input'))
-                    elif event.get('type') == 'user' and part.get('type') == 'tool_result':
-                        tool_id = part.get('tool_use_id')
-                        if isinstance(tool_id, str) and tool_id:
-                            tool_results[tool_id] = part
-            for tool_id, session_id in tool_calls.items():
-                result = tool_results.get(tool_id)
-                if result is None:
-                    continue
-                if result.get('is_error'):
-                    return {'tool_call_id': tool_id, 'session_id': session_id,
-                            'error': str(result.get('content') or 'native Task tool failed')}
-                return {'tool_call_id': tool_id, 'session_id': session_id,
-                        'status': 'completed', 'error': None}
+                    call_id = part.get('id')
+                    if not isinstance(call_id, str) or not call_id:
+                        return {'status': 'unsupported'}
+                    data = part.get('input')
+                    if not isinstance(data, dict):
+                        return {'status': 'unsupported'}
+                    background = data.get('run_in_background', False)
+                    if not isinstance(background, bool):
+                        return {'status': 'unsupported'}
+                    call = (name, background, data)
+                    if call_id in calls and calls[call_id] != call:
+                        return {'status': 'ambiguous'}
+                    calls[call_id] = call
+                elif event.get('type') == 'user' and part.get('type') == 'tool_result':
+                    call_id = part.get('tool_use_id')
+                    if not isinstance(call_id, str) or call_id not in calls:
+                        continue  # an orphan or earlier result cannot prove this call
+                    is_error = part.get('is_error', False)
+                    if not isinstance(is_error, bool):
+                        return {'status': 'unsupported'}
+                    meta = event.get('tool_use_result')
+                    status = meta.get('status') if isinstance(meta, dict) else None
+                    if status is not None and not isinstance(status, str):
+                        return {'status': 'unsupported'}
+                    result = (is_error, status.lower() if status else None)
+                    if call_id in results and results[call_id] != result:
+                        return {'status': 'ambiguous'}
+                    results[call_id] = result
+        if not calls:
+            return {'status': 'not_invoked'}
+        if len(calls) != 1:
+            return {'status': 'ambiguous'}
+        call_id, (name, background, call_input) = next(iter(calls.items()))
+        if not WorkerTaskExecutor._bound_to_execution(call_input, execution_id):
+            return {'status': 'unbound'}
+        result = results.get(call_id)
+        if result is None:
+            return {'status': 'incomplete'}
+        is_error, status = result
+        if is_error or status in ('error', 'failed'):
+            return {'status': 'failed'}
+        if background or (name == 'agent' and status != 'completed'):
+            return {'status': 'incomplete'}
+        if status not in (None, 'completed'):
+            return {'status': 'unsupported'}
+        return {'status': 'completed', 'tool_call_id': call_id,
+                'session_id': None, 'error': None}
+
+    @staticmethod
+    def _opencode_handler_evidence(events, execution_id):
+        coordinator_session = WorkerTaskExecutor._coordinator_session_from_events(events)
+        if coordinator_session is None:
+            return {'status': 'unsupported'}
+        calls = {}
+        for event in events:
+            if event.get('type') != 'tool_use':
+                continue
+            part = event.get('part') if isinstance(event.get('part'), dict) else {}
+            if str(part.get('tool') or '').lower() not in ('task', 'subagent'):
+                continue
+            if event.get('sessionID') != coordinator_session:
+                return {'status': 'ambiguous'}
+            state = part.get('state') if isinstance(part.get('state'), dict) else {}
+            call_id = part.get('callID') or part.get('id') or state.get('callID')
+            if not isinstance(call_id, str) or not call_id:
+                return {'status': 'unsupported'}
+            status = str(state.get('status') or '').lower()
+            previous = calls.get(call_id)
+            terminal = ('completed', 'complete', 'success', 'error')
+            if previous and previous[0] in terminal and status in terminal and previous[0] != status:
+                return {'status': 'ambiguous'}
+            session_id = WorkerTaskExecutor._child_session_id(state)
+            call_input = state.get('input')
+            if 'input' in state and not isinstance(call_input, dict):
+                return {'status': 'unsupported'}
+            if (previous and isinstance(call_input, dict) and previous[2] is not None
+                    and previous[2] != call_input):
+                return {'status': 'ambiguous'}
+            calls[call_id] = (status, session_id or (previous[1] if previous else None),
+                              call_input if isinstance(call_input, dict) else
+                              (previous[2] if previous else None))
+        if not calls:
+            return {'status': 'not_invoked'}
+        if len(calls) != 1:
+            return {'status': 'ambiguous'}
+        call_id, (status, session_id, call_input) = next(iter(calls.items()))
+        if call_input is not None and not WorkerTaskExecutor._bound_to_execution(call_input, execution_id):
+            return {'status': 'unbound'}
+        if status == 'error':
+            return {'status': 'failed'}
+        if status not in ('completed', 'complete', 'success'):
+            return {'status': 'incomplete'}
+        return {'status': 'completed', 'tool_call_id': call_id,
+                'session_id': session_id, 'error': None}
+
+    @staticmethod
+    def _bound_to_execution(call_input, execution_id):
+        if not isinstance(call_input, dict) or not isinstance(execution_id, str) or not execution_id:
+            return False
+        prompt = call_input.get('prompt')
+        if not isinstance(prompt, str):
+            return False
+        pattern = r'(?<![A-Za-z0-9_])execution=' + re.escape(execution_id) + r'(?![A-Za-z0-9_-])'
+        return re.search(pattern, prompt) is not None
+
+    @staticmethod
+    def _child_session_id(value):
+        if isinstance(value, dict):
+            for key in ('sessionID', 'sessionId', 'session_id',
+                        'childSessionId', 'child_session_id'):
+                candidate = value.get(key)
+                if isinstance(candidate, str) and candidate.startswith('ses_'):
+                    return candidate
+            for item in value.values():
+                found = WorkerTaskExecutor._child_session_id(item)
+                if found:
+                    return found
+        elif isinstance(value, list):
+            for item in value:
+                found = WorkerTaskExecutor._child_session_id(item)
+                if found:
+                    return found
         return None
 
     def _repair_pr(self, task):
@@ -383,8 +723,7 @@ class WorkerTaskExecutor:
             except Exception as exc:
                 review_round.remove_worktree_quietly(
                     cfg, prepared.get('worktree'), self.agent.git_fn)
-                reason = 'WORKER_TASK_JOURNAL_FAILED: %s: %s' % (
-                    type(exc).__name__, exc)
+                reason = 'WORKER_TASK_JOURNAL_FAILED: %s' % type(exc).__name__
                 report = getattr(self.agent, '_report_worker_task', None)
                 if callable(report):
                     report(task['id'], 'FAILED',
@@ -427,34 +766,49 @@ class WorkerTaskExecutor:
         except Exception as exc:
             review_round.remove_worktree_quietly(
                 cfg, prepared.get('worktree'), self.agent.git_fn)
+            safe_task = _SAFE_ID.sub('_', str(task['id']))[:80] or 'task'
+            log_path = (Path(self.agent.db_path).expanduser().with_name('worker-task-logs')
+                        / (safe_task + '.log'))
+            known = ('COORDINATOR_RUNTIME_TIMEOUT',)
+            reason = str(exc) if str(exc) in known else 'COORDINATOR_RUNTIME_FAILED'
             raise WorkerTaskExecutionError(
-                str(exc), prepared.get('execution'), prepared.get('token')) from None
-        output = self._output_text(stdout)
-        sessions = self._session_ids(stdout, output)
-        handler_call = self._native_handler_call(stdout, agent_name)
-        if not output or handler_call is None:
+                '%s: task=%s; execution=%s; log=%s'
+                % (reason, safe_task, prepared['execution'], log_path),
+                prepared.get('execution'), prepared.get('token')) from None
+        session_id = self._coordinator_session_id(stdout)
+        handler_call = self._native_handler_call(stdout, agent_name, prepared['execution'])
+        evidence_state = handler_call['status']
+        if evidence_state != 'completed':
+            code = ('HANDLER_CHILD_FAILED' if evidence_state == 'failed'
+                    else 'HANDLER_CHILD_UNCONFIRMED')
+            safe_task = _SAFE_ID.sub('_', str(task['id']))[:80]
             raise WorkerTaskExecutionError(
-                'HANDLER_CHILD_UNCONFIRMED: runtime output contains no completed native Task call',
-                prepared.get('execution'), prepared.get('token'))
-        if handler_call.get('error'):
-            raise WorkerTaskExecutionError(
-                'HANDLER_CHILD_FAILED: ' + handler_call['error'],
+                '%s: reason=%s; task=%s; execution=%s; log=%s'
+                % (code, evidence_state, safe_task, prepared['execution'], log_path),
                 prepared.get('execution'), prepared.get('token'))
         try:
             handler_execution = coordinator.worker.execution_status(
                 prepared['execution'])
         except Exception as exc:
             raise WorkerTaskExecutionError(
-                'HANDLER_EXECUTION_STATUS_UNAVAILABLE: %s: %s'
-                % (type(exc).__name__, exc),
+                'HANDLER_EXECUTION_STATUS_UNAVAILABLE: %s'
+                % type(exc).__name__,
                 prepared.get('execution'), prepared.get('token')) from None
+        if handler_execution and (not isinstance(handler_execution, dict)
+                                  or handler_execution.get('id') != prepared['execution']):
+            raise WorkerTaskExecutionError(
+                'HANDLER_EXECUTION_MISMATCH: prepared execution does not match response',
+                prepared.get('execution'), prepared.get('token'))
         if not handler_execution or handler_execution.get('state') != 'SUCCEEDED':
             state = (handler_execution or {}).get('state', 'MISSING')
+            if state not in ('RUNNING', 'FAILED', 'BLOCKED', 'CANCELLED', 'MISSING'):
+                state = 'UNKNOWN'
             raise WorkerTaskExecutionError(
                 'HANDLER_EXECUTION_NOT_SUCCEEDED: state=%s' % state,
                 prepared.get('execution'), prepared.get('token'))
-        return {'summary': output[-4000:], 'execution_id': prepared['execution'],
-                'session_id': sessions[0] if sessions else None,
+        return {'summary': 'Handler tool completed and CP execution succeeded.',
+                'execution_id': prepared['execution'],
+                'session_id': session_id,
                 'handler': {'execution_id': prepared['execution'],
                             'session_id': handler_call.get('session_id'),
                             'tool_call_id': handler_call['tool_call_id'],

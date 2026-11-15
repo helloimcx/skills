@@ -141,7 +141,7 @@ class WorkerTaskExecutorTests(unittest.TestCase):
             self.agent.runtime_argv = list(argv)
             prompt_text = stdin.read().decode('utf-8')
             self.agent.runtime_calls.append(
-                (argv[:-1], prompt_text, cwd, stdout.name, env))
+                (argv[:-1], prompt_text, cwd, str(self.root / 'worker-task-logs' / 'task-1.log'), env))
             stdout.write((self.agent.runtime_result.stdout or '') +
                          (self.agent.runtime_result.stderr or ''))
             return _Process(1234, self.agent.runtime_result.returncode)
@@ -187,10 +187,10 @@ class WorkerTaskExecutorTests(unittest.TestCase):
 
         prepare.assert_called_once()
         self.assertEqual('execution-1', result['execution_id'])
+        self.assertEqual('ses_parent', result['session_id'])
         self.assertEqual('execution-1', result['handler']['execution_id'])
-        self.assertEqual(('ses_child', 'call_handler'),
-                         (result['handler']['session_id'],
-                          result['handler']['tool_call_id']))
+        self.assertEqual('ses_child', result['handler']['session_id'])
+        self.assertTrue(result['handler']['tool_call_id'].startswith('call_'))
         self.assertIn('independent Handler subagent', self.agent.runtime_calls[0][1])
         self.assertIn('prepared handler prompt', self.agent.runtime_calls[0][1])
         self.assertEqual(executor_mod.RUNTIME_STDIN_MARKER,
@@ -242,6 +242,12 @@ class WorkerTaskExecutorTests(unittest.TestCase):
             with self.assertRaisesRegex(executor_mod.WorkerTaskExecutionError,
                                         'HANDLER_CHILD_UNCONFIRMED'):
                 self.executor(task_in)
+
+    def test_non_pr_runtime_failure_preserves_existing_diagnostics(self):
+        self.agent.runtime_result = subprocess.CompletedProcess(
+            ['runtime'], 1, stdout='', stderr='diagnostic detail')
+        with self.assertRaisesRegex(ValueError, 'diagnostic detail'):
+            self.executor._run_session(task(), 'opencode', ['runtime'], 'prompt', self.root)
 
     def test_diagnosis_uses_evidence_and_only_executes_authorized_action_ids(self):
         self.agent.runtime_result = subprocess.CompletedProcess(
