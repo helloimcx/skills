@@ -343,6 +343,70 @@ class StoreTests(unittest.TestCase):
         self.assertIsNotNone(again)
         self.assertGreater(again['token'], execution['token'])
 
+    def test_sweep_requeues_only_the_current_observed_version(self):
+        item = self.item()
+        execution = self.store.claim('handler', 'alice')
+        self.store.db.execute("INSERT INTO meta(key,value) VALUES ('current_versions',?)",
+                              (json.dumps({'issue-1': 'v1'}),))
+        self.store.db.execute('UPDATE executions SET expires_at=? WHERE id=?',
+                              (time.time() - 1, execution['id']))
+        self.store.sweep_expired()
+        self.assertEqual('READY', self.store.db.execute(
+            'SELECT state FROM work_items WHERE id=?', (item['id'],)).fetchone()[0])
+
+    def test_claim_skips_preexisting_stale_ready_item(self):
+        stale = self.item(key='issue-old', resources=['issue-old'])
+        current = self.item(key='issue-new', resources=['issue-new'])
+        self.store.db.execute("INSERT INTO meta(key,value) VALUES ('current_versions',?)",
+                              (json.dumps({'issue-new': 'v1'}),))
+        claimed = self.store.claim('handler', 'alice')
+        self.assertEqual(current['id'], claimed['item_id'])
+        self.assertEqual('CANCELLED', self.store.db.execute(
+            'SELECT state FROM work_items WHERE id=?', (stale['id'],)).fetchone()[0])
+
+    def test_abandon_does_not_requeue_a_superseded_version_without_ready_successor(self):
+        item = self.item()
+        execution = self.store.claim('handler', 'alice')
+        self.store.db.execute("INSERT INTO meta(key,value) VALUES ('current_versions',?)",
+                              (json.dumps({'issue-1': 'v2'}),))
+        self.store.abandon(execution['id'], execution['token'])
+        self.assertEqual('CANCELLED', self.store.db.execute(
+            'SELECT state FROM work_items WHERE id=?', (item['id'],)).fetchone()[0])
+
+    def test_idle_collapse_does_not_requeue_removed_item(self):
+        item = self.item()
+        execution = self.store.claim('handler', 'alice')
+        self.store.db.execute("INSERT INTO meta(key,value) VALUES ('current_versions','{}')")
+        self.store.db.execute('UPDATE executions SET created_at=?,last_seen_at=NULL WHERE id=?',
+                              (time.time() - 1000, execution['id']))
+        self.store.collapse_idle(60)
+        self.assertEqual('CANCELLED', self.store.db.execute(
+            'SELECT state FROM work_items WHERE id=?', (item['id'],)).fetchone()[0])
+
+    def test_stealing_expired_conflict_cancels_removed_victim(self):
+        victim_item = self.item(key='issue-1', resources=['issue-1', 'branch-x'])
+        self.item(key='issue-2', resources=['issue-2', 'branch-x'])
+        victim = self.store.claim('handler', 'alice')
+        self.store.db.execute("INSERT INTO meta(key,value) VALUES ('current_versions',?)",
+                              (json.dumps({'issue-2': 'v1'}),))
+        self.store.db.execute('UPDATE executions SET expires_at=? WHERE id=?',
+                              (time.time() - 1, victim['id']))
+        self.assertIsNotNone(self.store.claim('handler', 'bob'))
+        self.assertEqual('CANCELLED', self.store.db.execute(
+            'SELECT state FROM work_items WHERE id=?', (victim_item['id'],)).fetchone()[0])
+
+    def test_unresolved_publication_remains_fenced_when_source_disappears(self):
+        item = self.item()
+        execution = self.store.claim('handler', 'alice')
+        self.store.db.execute("INSERT INTO meta(key,value) VALUES ('current_versions','{}')")
+        self.store.db.execute("INSERT INTO outbox VALUES ('op1', ?, 'create_issue', '{}', 'SENDING', NULL)",
+                              (execution['id'],))
+        self.store.db.execute('UPDATE executions SET expires_at=? WHERE id=?',
+                              (time.time() - 1, execution['id']))
+        self.assertEqual([], self.store.sweep_expired())
+        self.assertEqual('RUNNING', self.store.db.execute(
+            'SELECT state FROM work_items WHERE id=?', (item['id'],)).fetchone()[0])
+
     def test_sweep_never_touches_unresolved_publication(self):
         item = self.item()
         execution = self.store.claim('handler', 'alice')

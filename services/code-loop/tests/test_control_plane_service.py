@@ -26,12 +26,33 @@ from codeloop.cp.service import Service
 from _service_test_base import Platform, git, ServiceTestsBase
 
 class ServiceTests(ServiceTestsBase):
+    def test_expired_review_of_merged_pr_is_not_requeued_after_sync(self):
+        pr = self.pr()
+        pr['body'] = 'fix'
+        self.platform.data['issues'] = []
+        self.platform.data['prs'] = [pr]
+        self.s.sync()
+        execution = self.s.claim('reviewer', 'old-worker')
+        self.assertIsNotNone(execution)
+        self.platform.data['prs'] = []  # merged or closed before the next sync
+        self.expire_observer()
+        self.s.sync()
+        self.s.store.db.execute('UPDATE executions SET expires_at=? WHERE id=?',
+                                (time.time() - 1, execution['id']))
+        self.assertIsNone(self.s.claim('reviewer', 'new-worker'))
+        row = self.s.store.db.execute('SELECT state FROM work_items WHERE id=?',
+                                      (execution['item_id'],)).fetchone()
+        self.assertEqual('CANCELLED', row['state'])
+
     def test_unlimited_parallel_claims_are_supported(self):
         self.s.cfg['max_parallel'] = None
         self.s.sync()
         for number in range(1, 6):
             self.s.store.put_item('review:%s' % number, 'reviewer', 'v1',
                                   {'pr': number}, ['pr-%s' % number])
+        current = self.s.meta('current_versions')
+        current.update({'review:%s' % number: 'v1' for number in range(1, 6)})
+        self.s.set_meta('current_versions', current)
         claims = [self.s.claim('reviewer', 'worker-%s' % number)
                   for number in range(1, 6)]
         self.assertEqual(5, len([claim for claim in claims if claim]))
@@ -100,6 +121,9 @@ class ServiceTests(ServiceTestsBase):
         self.assertNotIn('result', execution)
         # claim_raw shares the shape for the in-process CLI carrier.
         self.s.store.put_item('pr-1', 'reviewer', 'v1', {'pr': 1}, ['pr-1'])
+        current = self.s.meta('current_versions')
+        current['pr-1'] = 'v1'
+        self.s.set_meta('current_versions', current)
         envelope = self.s.claim_raw('reviewer', 'worker2')
         self.assertNotIn('result', envelope['execution'])
 

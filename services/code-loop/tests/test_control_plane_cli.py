@@ -165,6 +165,9 @@ class ClaimBlockedByTests(unittest.TestCase):
                 seed = Service(load_config(str(config), cwd=str(repo)), _FakePlatform())
                 seed.enable()
                 seed.sync()
+                current = seed.meta('current_versions')
+                current.update({'issue-%d' % n: 'v1' for n in (1, 2, 3)})
+                seed.set_meta('current_versions', current)
                 for n in (1, 2, 3):
                     seed.store.put_item('issue-%d' % n, 'handler', 'v1',
                                         {'number': n}, ['issue-%d' % n])
@@ -244,6 +247,9 @@ class ClaimBlockedByTests(unittest.TestCase):
                 seed.enable()
                 seed.sync()
                 seed.store.put_item('pr-1', 'reviewer', 'v1', {'pr': 1}, ['pr-1'])
+                current = seed.meta('current_versions')
+                current['pr-1'] = 'v1'
+                seed.set_meta('current_versions', current)
                 seed.store.db.close()
             finally:
                 if previous is None:

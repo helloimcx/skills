@@ -445,7 +445,12 @@ class Store(CommandStore):
                     query += ' AND (id=? OR key=?)'
                     args += [item_id, item_id]
                 query += ' ORDER BY priority DESC,created_at,id'
+                meta = self.db.execute("SELECT value FROM meta WHERE key='current_versions'").fetchone()
+                current = json.loads(meta['value']) if meta else None
                 for item in self.db.execute(query, args).fetchall():
+                    if meta and (not isinstance(current, dict) or current.get(item['key']) != item['version']):
+                        self.db.execute("UPDATE work_items SET state='CANCELLED' WHERE id=?", (item['id'],))
+                        continue
                     resources = json.loads(item['resources'])
                     blockers = [row for row in active
                                 if row['id'] not in stolen_ids
@@ -569,9 +574,17 @@ class Store(CommandStore):
                                           (victim['item_id'],)).fetchone()['resources'])
 
     def _requeue_or_cancel_item(self, item_id):
-        """A dead round without effects re-runs: the item goes back to READY
-        unless sync already produced a newer READY successor for the key."""
-        item = self.db.execute('SELECT key FROM work_items WHERE id=?', (item_id,)).fetchone()
+        """Requeue a dead round only while its input remains current.
+
+        Standalone stores without a sync map retain the legacy successor check.
+        The caller holds the write transaction, as does a sync updating the map.
+        """
+        item = self.db.execute('SELECT key,version FROM work_items WHERE id=?', (item_id,)).fetchone()
+        meta = self.db.execute("SELECT value FROM meta WHERE key='current_versions'").fetchone()
+        current = json.loads(meta['value']) if meta else None
+        if meta and (not isinstance(current, dict) or current.get(item['key']) != item['version']):
+            self.db.execute("UPDATE work_items SET state='CANCELLED' WHERE id=?", (item_id,))
+            return
         successor = self.db.execute(
             "SELECT 1 FROM work_items WHERE key=? AND state='READY' AND id!=?",
             (item['key'], item_id)).fetchone()
